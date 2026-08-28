@@ -85,10 +85,10 @@ jobs:
 
       - name: Build iOS Application (No Code Sign)
         run: |
-          flutter build ios --config-only --release
+          flutter build ios --config-only --no-codesign
           cd ios
           pod install
-          xcodebuild -workspace Runner.xcworkspace -scheme Runner -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -derivedDataPath ../build/ios
+          xcodebuild build -workspace Runner.xcworkspace -scheme Runner -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -derivedDataPath ../build/ios
           cd ..
 
       - name: Package IPA Archive
