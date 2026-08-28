@@ -1,0 +1,164 @@
+name: vibeARS Build & Release CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Release Version Tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # ==========================================
+  # 1. Build Android APK
+  # ==========================================
+  build-android:
+    name: Build Android Release APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.6'
+          channel: 'stable'
+          cache: true
+
+      - name: Initialize Platform Skeletons & Dependencies
+        run: |
+          flutter create --platforms=android,ios --org com.vibears .
+          flutter pub get
+
+      - name: Build Android Release APK
+        run: flutter build apk --release
+
+      - name: Copy & Rename APK
+        run: |
+          mkdir -p output
+          cp build/app/outputs/flutter-apk/app-release.apk output/vibeARS-Android-release.apk
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibeARS-Android-APK
+          path: output/vibeARS-Android-release.apk
+          if-no-files-found: error
+
+  # ==========================================
+  # 2. Build iOS IPA (Unsigned / Ad-Hoc)
+  # ==========================================
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-13
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.6'
+          channel: 'stable'
+          cache: true
+
+      - name: Initialize Platform Skeletons & Dependencies
+        run: |
+          flutter create --platforms=android,ios --org com.vibears .
+          flutter pub get
+
+      - name: Build iOS Application (No Code Sign)
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: Package IPA Archive
+        run: |
+          mkdir -p output/Payload
+          cp -r build/ios/iphoneos/Runner.app output/Payload/
+          cd output
+          zip -r vibeARS-iOS-unsigned.ipa Payload
+          cd ..
+
+      - name: Upload iOS IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibeARS-iOS-IPA
+          path: output/vibeARS-iOS-unsigned.ipa
+          if-no-files-found: error
+
+  # ==========================================
+  # 3. Create GitHub Release & Attach Binaries
+  # ==========================================
+  release:
+    name: Publish GitHub Release
+    needs: [build-android, build-ios]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vibeARS-Android-APK
+          path: release-assets
+
+      - name: Download iOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vibeARS-iOS-IPA
+          path: release-assets
+
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG_NAME=${{ github.event.inputs.version_name }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_NAME=v1.0.0-build-$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG_NAME }}
+          name: "vibeARS Release ${{ steps.vars.outputs.TAG_NAME }}"
+          body: |
+            ## vibeARS 生产就绪版本发布 (${{ steps.vars.outputs.TAG_NAME }})
+
+            ### 🚀 本次构建产物：
+            - **Android 客户端**: `vibeARS-Android-release.apk` (支持 Android 7.0 - Android 14)
+            - **iOS 客户端**: `vibeARS-iOS-unsigned.ipa` (支持 iOS 14.0+)
+
+            ### 🎙️ 核心功能特性：
+            - **不间断后台录音**：Android Foreground Service (Mic) + WakeLock 保活；iOS Background Audio Mode。
+            - **上游麦克风硬件探测与自由切换**：支持探测内置麦克风、蓝牙耳机 (SCO/A2DP)、USB声卡、有线耳机，展示采样率、声道数与拾音模式。
+            - **实时流式传输 (Live Streaming)**：低延迟 WebSocket Opus/PCM 实时推流，支持实时 ASR/通话处理。
+            - **5分钟无缝分段切片与上传**：基于样本计数的无缝滚转（零丢帧、零爆音），自动同步上传至 **WebDAV** 与 **Amazon S3 / MinIO / Cloudflare R2 / 阿里云OSS / 腾讯云COS**。
+            - **丰富本地音频配置**：支持 AAC/M4A、WAV、MP3、Opus 多格式，支持 64k-320kbps 动态码率与 16k-48kHz 采样率选择。
+          files: |
+            release-assets/vibeARS-Android-release.apk
+            release-assets/vibeARS-iOS-unsigned.ipa
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

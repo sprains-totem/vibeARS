@@ -1,0 +1,101 @@
+# AI Agent Instructions & Context for vibeARS
+
+## 1. Project Overview & Mission
+**vibeARS** is a mobile audio recording application built with a decoupled architecture (Flutter UI + Native Audio Engines).
+Core capabilities:
+1. **Uninterrupted Background Audio Recording**: Foreground service with microphone permission on Android; background audio mode on iOS.
+2. **Upstream Hardware Mic Discovery & Routing**: Real-time enumeration of audio input devices (built-in, bluetooth SCO/A2DP, USB audio interfaces, wired headsets) with capability breakdown (sample rates, channels, encodings, polar patterns) and runtime dynamic switching.
+3. **Multi-Channel Fan-Out Pipeline**:
+   - Real-time Low-Latency Streaming (WebSocket Opus/PCM, WebRTC).
+   - 5-Minute Seamless Slicer (Sample-accurate rollover without frame loss/glitches).
+   - Local Multi-Format Storage (AAC/M4A, WAV, MP3, Opus; 64k-320kbps).
+4. **Multi-Cloud Remote Slicing Storage**:
+   - WebDAV (RFC 4918).
+   - S3-compatible object storage (AWS SigV4).
+5. **Zero Local Compilation Constraint**:
+   - All builds, testing, and artifact generations MUST occur via GitHub Actions CI/CD workflows (`.github/workflows/build-and-release.yml`), releasing APK and IPA automatically.
+
+---
+
+## 2. Directory Structure Map
+
+```
+vibeARS/
+├── .github/
+│   └── workflows/
+│       └── build-and-release.yml    # CI/CD Workflow for Android APK & iOS IPA Release
+├── android/
+│   ├── app/
+│   │   ├── build.gradle             # Android App build config (compileSdk 34, minSdk 24)
+│   │   └── src/main/
+│   │       ├── AndroidManifest.xml  # Permissions (RECORD_AUDIO, FOREGROUND_SERVICE_MICROPHONE)
+│   │       └── kotlin/com/vibears/app/
+│   │           ├── MainActivity.kt
+│   │           └── audio/
+│   │               ├── AudioCaptureService.kt   # Persistent Foreground Service & WakeLock
+│   │               ├── AudioDeviceManager.kt   # Input devices discovery & routing
+│   │               ├── AudioPipeline.kt        # AudioRecord loop, amplitude, 5min slicer
+│   │               └── VibeAudioPlugin.kt      # MethodChannel & EventChannel bindings
+├── ios/
+│   ├── Podfile
+│   └── Runner/
+│       ├── Info.plist               # UIBackgroundModes (audio), Microphone descriptions
+│       ├── AppDelegate.swift
+│       └── Audio/
+│           ├── AudioDeviceManager.swift # AVAudioSession input discovery & routing
+│           ├── AudioEngineManager.swift # AVAudioEngine capture, amplitude, 5min slicer
+│           └── VibeAudioPlugin.swift    # Flutter bridge
+├── lib/
+│   ├── main.dart
+│   ├── core/
+│   │   └── models/
+│   │       ├── audio_config.dart    # Format, bitrate, sample rate, channels
+│   │       ├── audio_device.dart    # Hardware device & capability models
+│   │       ├── slicer_config.dart   # Slicer interval, slice items, status
+│   │       ├── storage_config.dart  # WebDAV & S3 configuration models
+│   │       └── streaming_config.dart# WebSocket / WebRTC streaming models
+│   ├── providers/
+│   │   └── app_state.dart           # Master reactive coordinator & state provider
+│   ├── services/
+│   │   ├── audio_engine_service.dart# Native platform channel bridge
+│   │   ├── streaming_service.dart   # WebSocket low-latency streaming client
+│   │   ├── local_storage_service.dart # Local file manager & audio player
+│   │   └── storage/
+│   │       ├── storage_adapter.dart     # Storage contract
+│   │       ├── webdav_storage_adapter.dart # WebDAV RFC 4918 client
+│   │       ├── s3_storage_adapter.dart  # AWS SigV4 S3 client
+│   │       └── upload_queue_manager.dart# Persistent upload queue & retry
+│   └── ui/
+│       ├── theme.dart               # Modern Material 3 dark audio theme
+│       ├── main_navigation_scaffold.dart
+│       ├── screens/
+│       │   ├── dashboard_screen.dart        # Real-time visualizer, timer & master controls
+│       │   ├── devices_screen.dart          # Upstream microphone hardware inspector
+│       │   ├── streaming_screen.dart        # Live streaming console & telemetry
+│       │   ├── slicer_screen.dart           # Segment slicer settings & upload queue
+│       │   ├── storage_settings_screen.dart # WebDAV, S3 & quality settings
+│       │   └── local_recordings_screen.dart # Local recordings & mini-player
+│       └── widgets/
+│           └── waveform_visualizer.dart     # 60fps dynamic audio visualizer
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── HARDWARE_AUDIO_ROUTING.md
+│   └── STORAGE_AND_STREAMING.md
+├── pubspec.yaml
+├── README.md
+└── AGENTS.md
+```
+
+---
+
+## 3. Important Design Invariants for Future Agents
+
+1. **Decoupled Architecture**:
+   - The Flutter UI communicates exclusively via `AppState` -> `Services` -> `Native Plugin`.
+   - If writing a pure Native UI (Kotlin Jetpack Compose or Swift SwiftUI) in the future, the underlying native audio engines (`android/.../audio` and `ios/.../Audio`) are already completely standalone and self-contained.
+2. **Seamless Audio Slicing**:
+   - Never stop the active `AudioRecord` / `AVAudioEngine` when rolling over slices. Keep the stream open and swap the output file descriptor on the fly based on sample count.
+3. **AWS SigV4 Client**:
+   - The custom S3 client avoids heavy external dependencies and supports custom endpoints, path-style and virtual-hosted-style URLs out of the box.
+4. **CI/CD Build Rules**:
+   - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.
