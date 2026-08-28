@@ -288,7 +288,7 @@ class AudioEngineManager: NSObject {
         guard let handle = currentSliceFileHandle, let fileUrl = currentSliceFileUrl else { return }
         
         try? handle.synchronize()
-        try? handle.close()
+        handle.closeFile()
         
         let actualDurationMs = (currentSlicePcmBytes * 1000) / Int64(sampleRate * Double(channelCount) * 2.0)
         if formatString == "wav" {
@@ -340,7 +340,7 @@ class AudioEngineManager: NSObject {
         
         handle.seek(toFileOffset: 0)
         handle.write(header)
-        try? handle.close()
+        handle.closeFile()
     }
     
     @objc private func handleInterruption(notification: Notification) {
@@ -375,10 +375,10 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
         registrar.addMethodCallDelegate(instance, channel: methodChannel)
         
         let audioEventChannel = FlutterEventChannel(name: AUDIO_STREAM_CHANNEL, binaryMessenger: registrar.messenger())
-        audioEventChannel.setStreamHandler(instance.AudioStreamHandler(plugin: instance))
+        audioEventChannel.setStreamHandler(VibeAudioPlugin.AudioStreamHandler(plugin: instance))
         
         let sliceEventChannel = FlutterEventChannel(name: SLICE_STREAM_CHANNEL, binaryMessenger: registrar.messenger())
-        sliceEventChannel.setStreamHandler(instance.SliceStreamHandler(plugin: instance))
+        sliceEventChannel.setStreamHandler(VibeAudioPlugin.SliceStreamHandler(plugin: instance))
         
         AudioEngineManager.shared.delegate = instance
     }
