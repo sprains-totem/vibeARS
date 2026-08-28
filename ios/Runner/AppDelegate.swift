@@ -236,8 +236,8 @@ class AudioEngineManager: NSObject {
                 let sample = channelData[ch][frame]
                 let clamped = max(-1.0, min(1.0, sample))
                 let int16Sample = Int16(clamped * 32767.0)
-                var littleEndian = int16Sample.littleEndian
-                pcmData.append(UnsafeBufferPointer(start: &littleEndian, count: 1))
+                let littleEndian = int16Sample.littleEndian
+                withUnsafeBytes(of: littleEndian) { pcmData.append(contentsOf: $0) }
             }
         }
         
@@ -287,7 +287,7 @@ class AudioEngineManager: NSObject {
     private func closeCurrentSlice() {
         guard let handle = currentSliceFileHandle, let fileUrl = currentSliceFileUrl else { return }
         
-        try? handle.synchronize()
+        handle.synchronizeFile()
         handle.closeFile()
         
         let actualDurationMs = (currentSlicePcmBytes * 1000) / Int64(sampleRate * Double(channelCount) * 2.0)
