@@ -67,11 +67,14 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk output/vibeARS-Android-release.apk
 
       - name: Build Android Debug APK (Full Logging Diagnostics Build)
-        run: flutter build apk --debug
+        # arm64-only: debug APKs are much larger than release (JIT kernel +
+        # unstripped .so); limiting to the arm64 ABI used by virtually all
+        # modern devices keeps the diagnostics build manageable.
+        run: flutter build apk --debug --target-platform android-arm64
 
       - name: Copy & Rename Debug APK
         run: |
-          cp build/app/outputs/flutter-apk/app-debug.apk output/vibeARS-Android-debug.apk
+          cp build/app/outputs/flutter-apk/app-debug.apk output/vibeARS-Android-debug-arm64.apk
 
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
@@ -79,7 +82,7 @@ jobs:
           name: vibeARS-Android-APK
           path: |
             output/vibeARS-Android-release.apk
-            output/vibeARS-Android-debug.apk
+            output/vibeARS-Android-debug-arm64.apk
           if-no-files-found: error
 
   # ==========================================
@@ -174,7 +177,7 @@ jobs:
 
             ### 🚀 本次构建产物：
             - **Android 客户端（正式版）**: `vibeARS-Android-release.apk` (支持 Android 7.0 - Android 14，可覆盖安装)
-            - **Android 客户端（调试版·全量日志）**: `vibeARS-Android-debug.apk` (独立 applicationId `com.vibears.app.debug`，可与正式版共存安装，用于蓝牙/录音问题排查)
+            - **Android 客户端（调试版·全量日志）**: `vibeARS-Android-debug-arm64.apk` (独立 applicationId `com.vibears.app.debug`，可与正式版共存安装，用于蓝牙/录音问题排查；仅 arm64 架构)
             - **iOS 客户端**: `vibeARS-iOS-unsigned.ipa` (支持 iOS 14.0+)
 
             ### 🎙️ 核心功能特性：
@@ -186,7 +189,7 @@ jobs:
             - **本地多格式录制**：原生支持 WAV (PCM) 与 AAC/M4A 录制，码率设置真实生效。
           files: |
             release-assets/vibeARS-Android-release.apk
-            release-assets/vibeARS-Android-debug.apk
+            release-assets/vibeARS-Android-debug-arm64.apk
             release-assets/vibeARS-iOS-unsigned.ipa
           draft: false
           prerelease: false
