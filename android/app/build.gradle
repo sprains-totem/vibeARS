@@ -22,9 +22,9 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0.0'
 }
 
-// Fixed release keystore committed to the repo so every CI build signs the
-// APK identically, allowing in-place update installs (no uninstall needed).
-// Override the password via ANDROID_KEYSTORE_PASSWORD env when desired.
+// Release signing is driven entirely by GitHub Actions secrets (injected as
+// environment variables) or by an optional local android/key.properties file.
+// No keystore or password is committed to the repository.
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
@@ -32,10 +32,11 @@ if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(reader)
     }
 }
-def ksStoreFile = keystoreProperties['storeFile'] ?: 'vibears-release.keystore'
-def ksStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: (keystoreProperties['storePassword'] ?: 'vibears-ci-release-2026')
-def ksKeyAlias = keystoreProperties['keyAlias'] ?: 'vibears'
-def ksKeyPassword = System.getenv('ANDROID_KEY_PASSWORD') ?: (keystoreProperties['keyPassword'] ?: 'vibears-ci-release-2026')
+def ksStoreFile = System.getenv('ANDROID_KEYSTORE_FILE') ?: (keystoreProperties['storeFile'] ?: 'vibears-release.keystore')
+def ksStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: keystoreProperties['storePassword']
+def ksKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: keystoreProperties['keyAlias']
+def ksKeyPassword = System.getenv('ANDROID_KEY_PASSWORD') ?: keystoreProperties['keyPassword']
+def hasReleaseSigning = file(ksStoreFile).exists() && ksStorePassword != null && ksKeyAlias != null && ksKeyPassword != null
 
 android {
     namespace "com.vibears.app"
@@ -66,17 +67,23 @@ android {
     }
 
     signingConfigs {
-        release {
-            storeFile file(ksStoreFile)
-            storePassword ksStorePassword
-            keyAlias ksKeyAlias
-            keyPassword ksKeyPassword
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(ksStoreFile)
+                storePassword ksStorePassword
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPassword
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

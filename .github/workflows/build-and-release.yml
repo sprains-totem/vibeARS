@@ -46,8 +46,20 @@ jobs:
           flutter create --project-name vibears --platforms=android,ios --org com.vibears --no-overwrite .
           flutter pub get
 
+      - name: Restore Android Signing Keystore (from Secrets)
+        shell: bash
+        run: |
+          printf '%s' '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | base64 -d > android/app/vibears-release.keystore
+          ls -la android/app/vibears-release.keystore
+
       - name: Build Android Release APK
         run: flutter build apk --release
+        env:
+          # Path is relative to the android/app module directory.
+          ANDROID_KEYSTORE_FILE: vibears-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 
       - name: Copy & Rename APK
         run: |

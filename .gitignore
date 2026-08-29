@@ -70,3 +70,8 @@ migrate_working_dir/
 
 # Exceptions to flutter repo
 !.gitignore
+
+# Release signing key material (keystore is injected from GitHub Secrets in CI)
+**/android/**/*.keystore
+**/android/**/*.jks
+**/android/key.properties

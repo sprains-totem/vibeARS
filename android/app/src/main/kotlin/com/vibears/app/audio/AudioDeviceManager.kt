@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 
@@ -69,46 +70,77 @@ class AudioDeviceManager(private val context: Context) {
         return result
     }
 
+    fun isScoDevice(deviceId: Int?): Boolean {
+        if (deviceId == null) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
+        return target?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+    }
+
+    /**
+     * Activates the Bluetooth SCO/communication route BEFORE an AudioRecord is
+     * created. On Android 11+ this uses the modern setCommunicationDevice
+     * API; older versions use the legacy startBluetoothSco(). Without this the
+     * SCO hardware path is not available for capture.
+     */
+    fun prepareDeviceRoute(deviceId: Int?) {
+        if (!isScoDevice(deviceId)) return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
+                if (target != null) {
+                    audioManager.setCommunicationDevice(target)
+                    Log.d(TAG, "setCommunicationDevice (SCO): $deviceId")
+                }
+            } else {
+                audioManager.startBluetoothSco()
+                audioManager.isBluetoothScoOn = true
+                Log.d(TAG, "startBluetoothSco (legacy)")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error preparing Bluetooth route: ${e.message}")
+        }
+    }
+
+    fun stopBluetoothRoute() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            } else {
+                if (audioManager.isBluetoothScoOn) {
+                    audioManager.stopBluetoothSco()
+                    audioManager.isBluetoothScoOn = false
+                }
+            }
+            Log.d(TAG, "Bluetooth route stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping Bluetooth route: ${e.message}")
+        }
+    }
+
+    /**
+     * SCO capture requires the VOICE_COMMUNICATION audio source so the
+     * hardware routes the microphone through the HFP/SCO path.
+     */
+    fun resolveAudioSource(deviceId: Int?): Int {
+        return if (isScoDevice(deviceId)) {
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        } else {
+            MediaRecorder.AudioSource.MIC
+        }
+    }
+
     fun applyPreferredDevice(audioRecord: AudioRecord, deviceId: Int?): Boolean {
         if (deviceId == null) return false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
-            val target = devices.find { it.id == deviceId }
+            val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
             if (target != null) {
-                // For Bluetooth SCO, the SCO channel must be activated *before*
-                // AudioRecord is created/routed, otherwise the hardware path is
-                // not available for capture.
-                if (target.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                    startBluetoothSco()
-                }
                 val success = audioRecord.setPreferredDevice(target)
                 Log.d(TAG, "setPreferredDevice ($deviceId): $success")
                 return success
             }
         }
         return false
-    }
-
-    fun startBluetoothSco() {
-        try {
-            audioManager.startBluetoothSco()
-            audioManager.isBluetoothScoOn = true
-            Log.d(TAG, "Bluetooth SCO started")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting Bluetooth SCO: ${e.message}")
-        }
-    }
-
-    fun stopBluetoothSco() {
-        try {
-            if (audioManager.isBluetoothScoOn) {
-                audioManager.stopBluetoothSco()
-                audioManager.isBluetoothScoOn = false
-                Log.d(TAG, "Bluetooth SCO stopped")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping Bluetooth SCO: ${e.message}")
-        }
     }
 
     private fun getDeviceTypeName(type: Int): String {

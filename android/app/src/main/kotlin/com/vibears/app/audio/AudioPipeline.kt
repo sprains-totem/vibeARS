@@ -4,10 +4,6 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
-import android.media.MediaFormat
-import android.media.MediaMuxer
-import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -114,6 +110,12 @@ class AudioPipeline(
         }
         val audioEncoding = AudioFormat.ENCODING_PCM_16BIT
 
+        // Bluetooth SCO capture: activate the communication route BEFORE the
+        // AudioRecord is created, and use VOICE_COMMUNICATION as the source so
+        // the hardware routes the microphone through the HFP/SCO path.
+        audioDeviceManager.prepareDeviceRoute(preferredDeviceId)
+        val audioSource = audioDeviceManager.resolveAudioSource(preferredDeviceId)
+
         val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding)
         if (minBufferSize <= 0) {
             listener.onError("Sample rate $sampleRate is not supported by this device")
@@ -123,7 +125,7 @@ class AudioPipeline(
 
         try {
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                audioSource,
                 sampleRate,
                 channelConfig,
                 audioEncoding,
@@ -204,6 +206,9 @@ class AudioPipeline(
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing uplink codec", e)
         }
+
+        // Release the Bluetooth SCO route if it was activated.
+        audioDeviceManager.stopBluetoothRoute()
 
         // Close and finalize the last slice
         closeCurrentSlice()
