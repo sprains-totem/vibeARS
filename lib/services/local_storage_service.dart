@@ -49,6 +49,10 @@ class LocalRecordingFile {
     if (sizeBytes < 1024 * 1024) return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
     return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
+
+  /// Raw PCM slices from older builds have no WAV header and cannot be
+  /// decoded by the system player.
+  bool get isRawPcm => extension.toLowerCase() == 'pcm';
 }
 
 class LocalStorageService extends ChangeNotifier {
@@ -234,28 +238,8 @@ class LocalStorageService extends ChangeNotifier {
         await dir.create(recursive: true);
       }
 
-      final entities = dir.listSync();
       final list = <LocalRecordingFile>[];
-
-      for (final entity in entities) {
-        if (entity is File) {
-          final ext = p.extension(entity.path).toLowerCase();
-          // Only list playable audio files; raw .pcm slices from older
-          // versions are skipped because they cannot be decoded by the player.
-          if (['.wav', '.m4a', '.aac', '.mp3', '.opus', '.ogg'].contains(ext)) {
-            final stat = entity.statSync();
-            list.add(
-              LocalRecordingFile(
-                path: entity.path,
-                name: p.basename(entity.path),
-                sizeBytes: stat.size,
-                modifiedAt: stat.modified,
-                extension: ext.replaceAll('.', ''),
-              ),
-            );
-          }
-        }
-      }
+      _collectAudioFiles(dir, list, depth: 0);
 
       // Sort newest first
       list.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
@@ -263,6 +247,42 @@ class LocalStorageService extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('[LocalStorageService] Error refreshing files: $e');
+    }
+  }
+
+  /// Recursively collects audio files (up to 3 directory levels deep) so the
+  /// library shows every recording under the active storage path.
+  void _collectAudioFiles(Directory dir, List<LocalRecordingFile> out, {int depth = 0}) {
+    if (depth > 3) return;
+    List<FileSystemEntity> entities;
+    try {
+      entities = dir.listSync();
+    } catch (e) {
+      print('[LocalStorageService] Error listing ${dir.path}: $e');
+      return;
+    }
+
+    for (final entity in entities) {
+      if (entity is File) {
+        final ext = p.extension(entity.path).toLowerCase();
+        // List every recording file. Legacy raw .pcm slices (from older
+        // builds) are shown with a marker so the user can see and manage
+        // them, even though they are not playable without a header.
+        if (['.wav', '.m4a', '.aac', '.mp3', '.opus', '.ogg', '.pcm'].contains(ext)) {
+          final stat = entity.statSync();
+          out.add(
+            LocalRecordingFile(
+              path: entity.path,
+              name: p.basename(entity.path),
+              sizeBytes: stat.size,
+              modifiedAt: stat.modified,
+              extension: ext.replaceAll('.', ''),
+            ),
+          );
+        }
+      } else if (entity is Directory) {
+        _collectAudioFiles(entity, out, depth: depth + 1);
+      }
     }
   }
 
@@ -276,6 +296,17 @@ class LocalStorageService extends ChangeNotifier {
       final file = File(path);
       if (!await file.exists()) {
         _lastPlayError = '文件不存在: $path';
+        print('[LocalStorageService] ${_lastPlayError}');
+        if (_currentlyPlayingPath == path) {
+          _currentlyPlayingPath = null;
+        }
+        notifyListeners();
+        return false;
+      }
+
+      // Raw PCM has no header and cannot be decoded by the system player.
+      if (p.extension(path).toLowerCase() == '.pcm') {
+        _lastPlayError = '该文件为原始 PCM 数据（无音频头），无法直接播放，可删除或等待后续转码';
         print('[LocalStorageService] ${_lastPlayError}');
         if (_currentlyPlayingPath == path) {
           _currentlyPlayingPath = null;

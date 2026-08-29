@@ -456,7 +456,8 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '当前原生采集引擎输出标准 WAV (PCM 无损)，录音后可通过“录音库”内的一键分享 / ZIP 打包随时转换导出为其他格式。',
+                                  '原生采集引擎统一录制为标准 WAV (PCM 无损)，因此录音文件始终可保存、可播放。'
+                                  'AAC/MP3/Opus 等格式可通过“录音库”中的分享 / ZIP 打包 / 目录复制导出转换。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),
@@ -470,20 +471,27 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           runSpacing: 8,
                           children: AudioFormatType.values.map((fmt) {
                             final isSelected = audioConfig.format == fmt;
+                            final isNativeSupported = fmt == AudioFormatType.wav;
                             return ChoiceChip(
                               label: Text(fmt.displayName),
                               selected: isSelected,
+                              // Native capture records WAV only; other formats
+                              // are produced via export (share/ZIP/copy).
+                              onSelected: isNativeSupported
+                                  ? (selected) {
+                                      if (selected) {
+                                        state.updateAudioConfig(audioConfig.copyWith(format: fmt));
+                                      }
+                                    }
+                                  : null,
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
-                                color: isSelected ? Colors.black : Colors.white,
+                                color: isSelected
+                                    ? Colors.black
+                                    : (isNativeSupported ? Colors.white : Colors.grey),
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                 fontSize: 13,
                               ),
-                              onSelected: (selected) {
-                                if (selected) {
-                                  state.updateAudioConfig(audioConfig.copyWith(format: fmt));
-                                }
-                              },
                             );
                           }).toList(),
                         ),

@@ -46,9 +46,10 @@ class AudioPipeline(
 
     private val audioDeviceManager = AudioDeviceManager(context)
 
-    // The native capture layer only emits raw PCM; any requested format other
-    // than WAV is stored as WAV (PCM) so the output is always a playable file.
-    private val isWavOutput: Boolean = format.lowercase() == "wav" || format.lowercase() == "pcm"
+    // The native capture layer only emits raw PCM; recordings are ALWAYS
+    // stored as standard WAV (with a proper RIFF header) regardless of the
+    // requested format, so every file is playable and discoverable.
+    private val isWavOutput: Boolean = true
 
     // Current slice file tracking
     private var currentSliceFile: File? = null

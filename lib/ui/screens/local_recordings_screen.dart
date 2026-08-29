@@ -347,6 +347,7 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                     const PopupMenuItem(value: 'm4a', child: Text('M4A (AAC)')),
                     const PopupMenuItem(value: 'mp3', child: Text('MP3')),
                     const PopupMenuItem(value: 'opus', child: Text('Opus / Ogg')),
+                    const PopupMenuItem(value: 'pcm', child: Text('PCM (原始数据)')),
                   ],
                 ),
               ],
@@ -541,18 +542,30 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                             decoration: BoxDecoration(
-                                              color: const Color(0xFF37474F),
+                                              color: file.isRawPcm
+                                                  ? VibeTheme.errorRed.withOpacity(0.15)
+                                                  : const Color(0xFF37474F),
                                               borderRadius: BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              file.extension.toUpperCase(),
-                                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                                              file.isRawPcm ? '原始PCM' : file.extension.toUpperCase(),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: file.isRawPcm ? VibeTheme.errorRed : null,
+                                              ),
                                             ),
                                           ),
                                           const SizedBox(width: 8),
-                                          Text(
-                                            '${file.formattedSize} · ${DateFormat('yyyy-MM-dd HH:mm').format(file.modifiedAt)}',
-                                            style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                                          Expanded(
+                                            child: Text(
+                                              file.isRawPcm
+                                                  ? '${file.formattedSize} · 无音频头，不可直接播放'
+                                                  : '${file.formattedSize} · ${DateFormat('yyyy-MM-dd HH:mm').format(file.modifiedAt)}',
+                                              style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                           ),
                                         ],
                                       ),

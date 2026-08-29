@@ -117,8 +117,9 @@ class AudioEngineManager: NSObject {
     private var slicerEnabled: Bool = true
     private var sliceDurationSeconds: Double = 300.0
     private var outputDirectory: URL?
-    // Native capture emits PCM; everything is stored as WAV so files are playable.
-    private var isWavOutput: Bool { formatString == "wav" || formatString == "pcm" }
+    // Native capture emits PCM; recordings are ALWAYS stored as WAV so files
+    // are playable, regardless of the requested format.
+    private var isWavOutput: Bool { true }
     
     private var currentSliceFileUrl: URL?
     private var currentSliceFileHandle: FileHandle?
