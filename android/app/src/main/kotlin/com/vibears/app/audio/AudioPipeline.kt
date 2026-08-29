@@ -193,6 +193,17 @@ class AudioPipeline(
             audioRecord?.startRecording()
             Log.d(TAG, "AudioRecord.startRecording() OK")
             nl(TAG, "AudioRecord.startRecording() OK")
+            // If a preferred device was routed, confirm the record object's
+            // actual routed input device (verifies SCO data path, not just API
+            // success).
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val routed = audioRecord?.routedDevice
+                nl(
+                    TAG,
+                    "AudioRecord.routedDevice: " +
+                        (routed?.let { "id=${it.id} type=${it.type}" } ?: "null")
+                )
+            }
 
             // Start the uplink AAC encoder if requested (ADTS stream output).
             if (uplinkAac) {

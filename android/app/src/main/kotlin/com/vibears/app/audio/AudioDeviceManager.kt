@@ -121,6 +121,13 @@ class AudioDeviceManager(private val context: Context) {
                 }
                 audioManager.setCommunicationDevice(target)
                 nl(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
+                // Verify what the framework actually routed to.
+                val comm = audioManager.communicationDevice
+                nl(
+                    TAG,
+                    "communicationDevice after set: " +
+                        (comm?.let { "id=${it.id} type=${getDeviceTypeName(it.type)}" } ?: "NULL (no comm device!)")
+                )
                 // Give the framework a moment to route before AudioRecord init.
                 Thread.sleep(300)
                 true
