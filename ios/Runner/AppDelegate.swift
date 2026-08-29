@@ -422,6 +422,23 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
             result(true)
         case "requestIgnoreBatteryOptimizations":
             result(true)
+        case "getDefaultStorageDirectory":
+            let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? ""
+            let dir = (docs as NSString).appendingPathComponent("vibe_recordings")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            result(dir)
+        case "getStoragePresets":
+            let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? ""
+            let recDir = (docs as NSString).appendingPathComponent("vibe_recordings")
+            let sharedDocs = (docs as NSString).appendingPathComponent("SharedRecordings")
+            result([
+                "app_sandbox": recDir,
+                "public_documents": sharedDocs
+            ])
+        case "isManageStorageGranted":
+            result(true)
+        case "requestManageStoragePermission":
+            result(true)
         default:
             result(FlutterMethodNotImplemented)
         }

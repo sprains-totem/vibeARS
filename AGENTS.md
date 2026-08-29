@@ -57,9 +57,9 @@ vibeARS/
 │   ├── providers/
 │   │   └── app_state.dart           # Master reactive coordinator & state provider
 │   ├── services/
-│   │   ├── audio_engine_service.dart# Native platform channel bridge
+│   │   ├── audio_engine_service.dart# Native platform channel bridge & path resolver
 │   │   ├── streaming_service.dart   # WebSocket low-latency streaming client
-│   │   ├── local_storage_service.dart # Local file manager & audio player
+│   │   ├── local_storage_service.dart # Local file manager, advanced player & batch exporter
 │   │   └── storage/
 │   │       ├── storage_adapter.dart     # Storage contract
 │   │       ├── webdav_storage_adapter.dart # WebDAV RFC 4918 client
@@ -73,10 +73,11 @@ vibeARS/
 │       │   ├── devices_screen.dart          # Upstream microphone hardware inspector
 │       │   ├── streaming_screen.dart        # Live streaming console & telemetry
 │       │   ├── slicer_screen.dart           # Segment slicer settings & upload queue
-│       │   ├── storage_settings_screen.dart # WebDAV, S3 & quality settings
-│       │   └── local_recordings_screen.dart # Local recordings & mini-player
+│       │   ├── storage_settings_screen.dart # Path selection, permissions & cloud settings
+│       │   └── local_recordings_screen.dart # Local recordings, batch exporter & mini-player
 │       └── widgets/
-│           └── waveform_visualizer.dart     # 60fps dynamic audio visualizer
+│           ├── waveform_visualizer.dart     # 60fps dynamic audio visualizer
+│           └── full_player_bottom_sheet.dart# Full-featured player with speed/loop/skip
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── HARDWARE_AUDIO_ROUTING.md
@@ -95,7 +96,13 @@ vibeARS/
    - If writing a pure Native UI (Kotlin Jetpack Compose or Swift SwiftUI) in the future, the underlying native audio engines (`android/.../audio` and `ios/.../Audio`) are already completely standalone and self-contained.
 2. **Seamless Audio Slicing**:
    - Never stop the active `AudioRecord` / `AVAudioEngine` when rolling over slices. Keep the stream open and swap the output file descriptor on the fly based on sample count.
-3. **AWS SigV4 Client**:
+3. **Storage & Public Folder Priority**:
+   - On Android, default storage path prioritizes system public directories (e.g. `/storage/emulated/0/Music/vibeARS`), with presets for Downloads, Documents, Recordings, and custom absolute paths.
+4. **Enhanced Player & Batch Exporter**:
+   - Player supports 0.5x-2.0x playback speed, +/-10s skipping, loop/single/shuffle play modes, and waveform display.
+   - Batch exporter supports multi-selection, system Share Sheet, ZIP packaging and exporting, target directory copy, and bulk deletion.
+5. **AWS SigV4 Client**:
    - The custom S3 client avoids heavy external dependencies and supports custom endpoints, path-style and virtual-hosted-style URLs out of the box.
-4. **CI/CD Build Rules**:
+6. **CI/CD Build Rules**:
+   - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.
    - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.

@@ -27,12 +27,27 @@
     - **WebDAV 网盘**：支持坚果云、Nextcloud、ownCloud、群晖 WebDAV、Alist 等。
     - **S3 / 对象存储**：完整实现 AWS SigV4 认证，兼容 Amazon S3、MinIO、Cloudflare R2、阿里云 OSS、腾讯云 COS、Backblaze B2 等。
   - 后台离线队列、指数退避失败重试、上传进度实时反馈与本地缓存自动清理。
-- **Pipeline 3：本地存储与音质定制 (Local Archiver)**
-  - 支持 **AAC / M4A**、**WAV (无损 PCM)**、**MP3**、**Opus** 等多种格式。
-  - 支持 **64 kbps 至 320 kbps** 压缩码率自由调节。
-  - 内置沙盒录音库管理与即时音频波形播放器。
+### 3. 💾 本地存储、公共文件夹优先与自由路径选择
+- **Android 公共文件夹优先**：默认优先采用系统公共音乐目录（`/storage/emulated/0/Music/vibeARS`），系统文件管理器与第三方播放器即时可见，避免 App 卸载丢失录音。
+- **自由路径切换与预设**：支持一键切换至公共下载（Download）、公共录音（Recordings）、公共文档（Documents）或私有沙盒，并支持自由输入任意自定义存储绝对路径。
+- **全格式与码率支持**：支持 **AAC / M4A**、**WAV (无损 PCM)**、**MP3**、**Opus** 等多种格式，支持 **64 kbps 至 320 kbps** 压缩码率自由调节。
+- **Android 11+ 全文件管理权限**：内置 `MANAGE_EXTERNAL_STORAGE` 授权检测与引导，支持向 SD 卡或任意受限目录读写。
 
-### 3. 🛡️ 后台深度保活机制 (Uninterrupted Recording)
+### 4. 🎵 全功能高级播放器与批量导出系统 (Audio Player & Batch Export)
+- **高级播放器功能**：
+  - **多档倍速播放**：支持 0.5x、0.75x、1.0x、1.25x、1.5x、1.75x、2.0x 无级/快捷变速。
+  - **快进 / 快退**：支持 +/-10 秒精准快进与快退跳转。
+  - **多样播放循环模式**：支持顺序播放、单曲循环、列表循环、随机播放。
+  - **高精度拖拽进度条**与动态声波频谱动画。
+  - **沉浸式播放器底部弹窗**：支持查看文件格式、码率、采样率与修改时间。
+- **多选与批量导出机制**：
+  - **多选管理**：支持一键全选、反选、多选。
+  - **系统级批量分享**：调用系统 Share Sheet 批量分享音频文件至微信、邮件、网盘、AirDrop、蓝牙等。
+  - **一键打包 ZIP 归档**：批量将选中录音无损压缩为 `.zip` 文件并导出。
+  - **批量复制到指定目录**：一键将多个录音文件拷贝导出至指定的目标外部文件夹。
+  - **批量删除与云端同步**。
+
+### 5. 🛡️ 后台深度保活机制 (Uninterrupted Recording)
 - **Android 端**：
   - 运行前台服务 `ForegroundService` 并声明 `FOREGROUND_SERVICE_MICROPHONE` (Android 14 适配)。
   - 持有 `PARTIAL_WAKE_LOCK` 阻止 CPU 深度休眠。

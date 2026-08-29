@@ -76,7 +76,20 @@ class AudioEngineService {
     }
   }
 
-  Future<String> getRecordingsDirectory() async {
+  Future<String> getDefaultStorageDirectory() async {
+    try {
+      final String? path = await _methodChannel.invokeMethod<String>('getDefaultStorageDirectory');
+      if (path != null && path.isNotEmpty) {
+        final dir = Directory(path);
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        return dir.path;
+      }
+    } catch (e) {
+      print('[AudioEngineService] getDefaultStorageDirectory error: $e');
+    }
+
     final docsDir = await getApplicationDocumentsDirectory();
     final recDir = Directory('${docsDir.path}/vibe_recordings');
     if (!await recDir.exists()) {
@@ -85,12 +98,58 @@ class AudioEngineService {
     return recDir.path;
   }
 
+  Future<Map<String, String>> getStoragePresets() async {
+    try {
+      final Map<dynamic, dynamic>? raw = await _methodChannel.invokeMethod('getStoragePresets');
+      if (raw != null) {
+        return raw.map((k, v) => MapEntry(k.toString(), v.toString()));
+      }
+    } catch (e) {
+      print('[AudioEngineService] getStoragePresets error: $e');
+    }
+    final fallback = await getDefaultStorageDirectory();
+    return {'default': fallback};
+  }
+
+  Future<bool> isManageStorageGranted() async {
+    try {
+      final bool? granted = await _methodChannel.invokeMethod<bool>('isManageStorageGranted');
+      return granted == true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> requestManageStoragePermission() async {
+    try {
+      await _methodChannel.invokeMethod('requestManageStoragePermission');
+    } catch (e) {
+      print('[AudioEngineService] requestManageStoragePermission error: $e');
+    }
+  }
+
+  Future<String> getRecordingsDirectory({String? customPath}) async {
+    if (customPath != null && customPath.trim().isNotEmpty) {
+      final customDir = Directory(customPath.trim());
+      try {
+        if (!await customDir.exists()) {
+          await customDir.create(recursive: true);
+        }
+        return customDir.path;
+      } catch (e) {
+        print('[AudioEngineService] Custom directory creation failed: $e, falling back to default');
+      }
+    }
+    return await getDefaultStorageDirectory();
+  }
+
   Future<bool> startRecording({
     required AudioRecordingConfig audioConfig,
     required SlicerConfig slicerConfig,
+    String? storagePath,
   }) async {
     try {
-      final outputDir = await getRecordingsDirectory();
+      final outputDir = await getRecordingsDirectory(customPath: storagePath);
 
       final result = await _methodChannel.invokeMethod<bool>('startRecording', {
         'sampleRate': audioConfig.sampleRate,
@@ -98,6 +157,18 @@ class AudioEngineService {
         'format': audioConfig.format.fileExtension,
         'preferredDeviceId': int.tryParse(audioConfig.preferredDeviceId ?? '') ?? (Platform.isIOS ? audioConfig.preferredDeviceId : null),
         'slicerEnabled': slicerConfig.enabled,
+        'sliceDurationMinutes': slicerConfig.intervalMinutes,
+        'outputDir': outputDir,
+      });
+
+      _isRecording = result == true;
+      _isPaused = false;
+      return _isRecording;
+    } catch (e) {
+      print('[AudioEngineService] Error starting recording: $e');
+      return false;
+    }
+  }
         'sliceDurationMinutes': slicerConfig.intervalMinutes,
         'outputDir': outputDir,
       });

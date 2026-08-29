@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/audio_config.dart';
 import '../../core/models/storage_config.dart';
 import '../../providers/app_state.dart';
+import '../../services/audio_engine_service.dart';
 import '../../services/storage/s3_storage_adapter.dart';
 import '../../services/storage/webdav_storage_adapter.dart';
 import '../theme.dart';
@@ -29,8 +31,12 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
   late TextEditingController _s3SecretKeyController;
   late TextEditingController _s3PrefixController;
 
+  // Local Path Controller
+  late TextEditingController _localPathController;
+
   bool _isTestingWebDav = false;
   bool _isTestingS3 = false;
+  bool _isManageStorageGranted = true;
 
   @override
   void initState() {
@@ -38,6 +44,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
     final state = context.read<AppState>();
     final wd = state.webdavConfig;
     final s3 = state.s3Config;
+    final storage = state.storage;
 
     _webdavUrlController = TextEditingController(text: wd.serverUrl);
     _webdavUsernameController = TextEditingController(text: wd.username);
@@ -50,6 +57,17 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
     _s3AccessKeyController = TextEditingController(text: s3.accessKey);
     _s3SecretKeyController = TextEditingController(text: s3.secretKey);
     _s3PrefixController = TextEditingController(text: s3.remotePrefix);
+
+    _localPathController = TextEditingController(text: storage.customStoragePath);
+
+    _checkStoragePermission();
+  }
+
+  Future<void> _checkStoragePermission() async {
+    final granted = await AudioEngineService.instance.isManageStorageGranted();
+    if (mounted) {
+      setState(() => _isManageStorageGranted = granted);
+    }
   }
 
   @override
@@ -64,6 +82,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
     _s3AccessKeyController.dispose();
     _s3SecretKeyController.dispose();
     _s3PrefixController.dispose();
+    _localPathController.dispose();
     super.dispose();
   }
 
@@ -127,26 +146,29 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final audioConfig = state.audioConfig;
+    final storage = state.storage;
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('存储与录音参数'),
+          title: const Text('存储路径与参数配置'),
           bottom: const TabBar(
+            isScrollable: true,
             indicatorColor: VibeTheme.primaryNeon,
             labelColor: VibeTheme.primaryNeon,
             unselectedLabelColor: VibeTheme.textSecondary,
             tabs: [
+              Tab(text: '本地路径与权限'),
+              Tab(text: '录音参数'),
               Tab(text: 'WebDAV 网盘'),
               Tab(text: 'S3 对象存储'),
-              Tab(text: '本地音质参数'),
             ],
           ),
         ),
         body: TabBarView(
           children: [
-            // 1. WebDAV Config Tab
+            // 1. Local Storage Path & Permissions Tab
             ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -157,194 +179,196 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'WebDAV 远程同步配置',
+                          '本地录音存储路径 (Storage Path)',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          '支持 坚果云、Nextcloud、ownCloud、群晖 WebDAV、Alist 等私有云存储。',
+                          'Android 优先默认存储在公共音乐目录（Music），录音完成后系统音乐 App 和文件管理器均可即时读取。',
                           style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
                         ),
                         const Divider(height: 24, color: Color(0xFF2C394B)),
 
-                        TextField(
-                          controller: _webdavUrlController,
-                          decoration: const InputDecoration(
-                            labelText: '服务器 URL',
-                            hintText: 'https://dav.jianguoyun.com/dav/',
-                            prefixIcon: Icon(Icons.link),
-                          ),
-                          onChanged: (_) => _saveWebDav(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _webdavUsernameController,
-                          decoration: const InputDecoration(
-                            labelText: '用户名 / 邮箱',
-                            prefixIcon: Icon(Icons.person),
-                          ),
-                          onChanged: (_) => _saveWebDav(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _webdavPasswordController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: '应用密码 / Token',
-                            prefixIcon: Icon(Icons.lock),
-                          ),
-                          onChanged: (_) => _saveWebDav(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _webdavDirController,
-                          decoration: const InputDecoration(
-                            labelText: '远程保存目录',
-                            hintText: '/vibeARS/recordings',
-                            prefixIcon: Icon(Icons.folder),
-                          ),
-                          onChanged: (_) => _saveWebDav(state),
+                        // Active Path Info
+                        const Text('当前活跃存储路径：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 6),
+                        FutureBuilder<String>(
+                          future: storage.getActiveStoragePath(),
+                          builder: (context, snapshot) {
+                            final path = snapshot.data ?? '读取中...';
+                            return Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: VibeTheme.cardSurface,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: VibeTheme.primaryNeon.withOpacity(0.4)),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.folder, size: 20, color: VibeTheme.primaryNeon),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      path,
+                                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: VibeTheme.textPrimary),
+                                      maxLines: 2,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                         const SizedBox(height: 16),
 
+                        // Storage Presets
+                        const Text('快捷预设路径切换：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+
+                        if (storage.storagePresets.containsKey('public_music'))
+                          _PresetOptionButton(
+                            title: '公共音乐目录 (Music/vibeARS - 推荐)',
+                            subtitle: storage.storagePresets['public_music']!,
+                            icon: Icons.music_note,
+                            isSelected: storage.customStoragePath == storage.storagePresets['public_music'] ||
+                                (storage.customStoragePath.isEmpty && Platform.isAndroid),
+                            onTap: () {
+                              _localPathController.text = storage.storagePresets['public_music']!;
+                              storage.setStoragePath(storage.storagePresets['public_music']!);
+                            },
+                          ),
+
+                        if (storage.storagePresets.containsKey('public_recordings'))
+                          _PresetOptionButton(
+                            title: '公共录音目录 (Recordings/vibeARS)',
+                            subtitle: storage.storagePresets['public_recordings']!,
+                            icon: Icons.mic,
+                            isSelected: storage.customStoragePath == storage.storagePresets['public_recordings'],
+                            onTap: () {
+                              _localPathController.text = storage.storagePresets['public_recordings']!;
+                              storage.setStoragePath(storage.storagePresets['public_recordings']!);
+                            },
+                          ),
+
+                        if (storage.storagePresets.containsKey('public_download'))
+                          _PresetOptionButton(
+                            title: '公共下载目录 (Download/vibeARS)',
+                            subtitle: storage.storagePresets['public_download']!,
+                            icon: Icons.download,
+                            isSelected: storage.customStoragePath == storage.storagePresets['public_download'],
+                            onTap: () {
+                              _localPathController.text = storage.storagePresets['public_download']!;
+                              storage.setStoragePath(storage.storagePresets['public_download']!);
+                            },
+                          ),
+
+                        if (storage.storagePresets.containsKey('app_sandbox'))
+                          _PresetOptionButton(
+                            title: '应用沙盒目录 (App Sandbox - 私有保护)',
+                            subtitle: storage.storagePresets['app_sandbox']!,
+                            icon: Icons.security,
+                            isSelected: storage.customStoragePath == storage.storagePresets['app_sandbox'],
+                            onTap: () {
+                              _localPathController.text = storage.storagePresets['app_sandbox']!;
+                              storage.setStoragePath(storage.storagePresets['app_sandbox']!);
+                            },
+                          ),
+
+                        const SizedBox(height: 16),
+
+                        // Custom Path Input
+                        const Text('自由指定自定义路径：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _localPathController,
+                          decoration: const InputDecoration(
+                            labelText: '自定义绝对路径',
+                            hintText: '/storage/emulated/0/Music/MyRecordings',
+                            prefixIcon: Icon(Icons.edit_location_alt),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
                         ElevatedButton.icon(
-                          onPressed: _isTestingWebDav ? null : () => _testWebDav(state),
-                          icon: _isTestingWebDav
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.network_check),
-                          label: const Text('测试连接并保存'),
+                          onPressed: () async {
+                            final custom = _localPathController.text.trim();
+                            if (custom.isNotEmpty) {
+                              await storage.setStoragePath(custom);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('已保存并切换至: $custom'),
+                                    backgroundColor: VibeTheme.successGreen,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                          icon: const Icon(Icons.check),
+                          label: const Text('应用自定义路径'),
                         ),
                       ],
                     ),
                   ),
                 ),
-              ],
-            ),
+                const SizedBox(height: 12),
 
-            // 2. S3 Config Tab
-            ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'S3 / S3 兼容对象存储配置',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          '支持 Amazon S3、MinIO、Cloudflare R2、阿里云 OSS、腾讯云 COS、Backblaze B2 等。',
-                          style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
-                        ),
-                        const Divider(height: 24, color: Color(0xFF2C394B)),
-
-                        TextField(
-                          controller: _s3EndpointController,
-                          decoration: const InputDecoration(
-                            labelText: 'Endpoint (域名)',
-                            hintText: 's3.amazonaws.com 或 play.min.io',
-                            prefixIcon: Icon(Icons.cloud),
-                          ),
-                          onChanged: (_) => _saveS3(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _s3RegionController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Region (区域)',
-                                  hintText: 'us-east-1 / auto',
-                                ),
-                                onChanged: (_) => _saveS3(state),
+                // Android Permissions Card
+                if (Platform.isAndroid) ...[
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                '所有文件读写管理权限',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextField(
-                                controller: _s3BucketController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Bucket (存储桶)',
-                                  hintText: 'my-audio-bucket',
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: _isManageStorageGranted
+                                      ? VibeTheme.successGreen.withOpacity(0.2)
+                                      : VibeTheme.errorRed.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
-                                onChanged: (_) => _saveS3(state),
+                                child: Text(
+                                  _isManageStorageGranted ? '已授权' : '未完全授权',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: _isManageStorageGranted ? VibeTheme.successGreen : VibeTheme.errorRed,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _s3AccessKeyController,
-                          decoration: const InputDecoration(
-                            labelText: 'Access Key ID',
-                            prefixIcon: Icon(Icons.key),
+                            ],
                           ),
-                          onChanged: (_) => _saveS3(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _s3SecretKeyController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Secret Access Key',
-                            prefixIcon: Icon(Icons.vpn_key),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Android 11+ 系统若需要将录音存放到非默认公共目录或读取 SD 卡，需授予“所有文件访问权限”。',
+                            style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
                           ),
-                          onChanged: (_) => _saveS3(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: _s3PrefixController,
-                          decoration: const InputDecoration(
-                            labelText: '对象 Key 前缀',
-                            hintText: 'recordings/',
-                            prefixIcon: Icon(Icons.folder_open),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await AudioEngineService.instance.requestManageStoragePermission();
+                              await _checkStoragePermission();
+                            },
+                            icon: const Icon(Icons.admin_panel_settings),
+                            label: const Text('打开系统设置授权'),
                           ),
-                          onChanged: (_) => _saveS3(state),
-                        ),
-                        const SizedBox(height: 12),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('使用 Path-Style 寻址 (MinIO必选)'),
-                            Switch(
-                              value: state.s3Config.usePathStyle,
-                              activeColor: VibeTheme.primaryNeon,
-                              onChanged: (val) {
-                                state.updateS3Config(state.s3Config.copyWith(usePathStyle: val));
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        ElevatedButton.icon(
-                          onPressed: _isTestingS3 ? null : () => _testS3(state),
-                          icon: _isTestingS3
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.network_check),
-                          label: const Text('测试 S3 连通性并保存'),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
 
-            // 3. Local Audio Parameters Tab
+            // 2. Audio Quality & Parameters Tab
             ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -494,8 +518,252 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                 ),
               ],
             ),
+
+            // 3. WebDAV Config Tab
+            ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'WebDAV 远程同步配置',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          '支持 坚果云、Nextcloud、ownCloud、群晖 WebDAV、Alist 等私有云存储。',
+                          style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
+                        ),
+                        const Divider(height: 24, color: Color(0xFF2C394B)),
+
+                        TextField(
+                          controller: _webdavUrlController,
+                          decoration: const InputDecoration(
+                            labelText: '服务器 URL',
+                            hintText: 'https://dav.jianguoyun.com/dav/',
+                            prefixIcon: Icon(Icons.link),
+                          ),
+                          onChanged: (_) => _saveWebDav(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _webdavUsernameController,
+                          decoration: const InputDecoration(
+                            labelText: '用户名 / 邮箱',
+                            prefixIcon: Icon(Icons.person),
+                          ),
+                          onChanged: (_) => _saveWebDav(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _webdavPasswordController,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: '应用密码 / Token',
+                            prefixIcon: Icon(Icons.lock),
+                          ),
+                          onChanged: (_) => _saveWebDav(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _webdavDirController,
+                          decoration: const InputDecoration(
+                            labelText: '远程保存目录',
+                            hintText: '/vibeARS/recordings',
+                            prefixIcon: Icon(Icons.folder),
+                          ),
+                          onChanged: (_) => _saveWebDav(state),
+                        ),
+                        const SizedBox(height: 16),
+
+                        ElevatedButton.icon(
+                          onPressed: _isTestingWebDav ? null : () => _testWebDav(state),
+                          icon: _isTestingWebDav
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.network_check),
+                          label: const Text('测试连接并保存'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // 4. S3 Config Tab
+            ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'S3 / S3 兼容对象存储配置',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          '支持 Amazon S3、MinIO、Cloudflare R2、阿里云 OSS、腾讯云 COS、Backblaze B2 等。',
+                          style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
+                        ),
+                        const Divider(height: 24, color: Color(0xFF2C394B)),
+
+                        TextField(
+                          controller: _s3EndpointController,
+                          decoration: const InputDecoration(
+                            labelText: 'Endpoint (域名)',
+                            hintText: 's3.amazonaws.com 或 play.min.io',
+                            prefixIcon: Icon(Icons.cloud),
+                          ),
+                          onChanged: (_) => _saveS3(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _s3RegionController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Region (区域)',
+                                  hintText: 'us-east-1 / auto',
+                                ),
+                                onChanged: (_) => _saveS3(state),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _s3BucketController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Bucket (存储桶)',
+                                  hintText: 'my-audio-bucket',
+                                ),
+                                onChanged: (_) => _saveS3(state),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _s3AccessKeyController,
+                          decoration: const InputDecoration(
+                            labelText: 'Access Key ID',
+                            prefixIcon: Icon(Icons.key),
+                          ),
+                          onChanged: (_) => _saveS3(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _s3SecretKeyController,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Secret Access Key',
+                            prefixIcon: Icon(Icons.vpn_key),
+                          ),
+                          onChanged: (_) => _saveS3(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextField(
+                          controller: _s3PrefixController,
+                          decoration: const InputDecoration(
+                            labelText: '对象 Key 前缀',
+                            hintText: 'recordings/',
+                            prefixIcon: Icon(Icons.folder_open),
+                          ),
+                          onChanged: (_) => _saveS3(state),
+                        ),
+                        const SizedBox(height: 12),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('使用 Path-Style 寻址 (MinIO必选)'),
+                            Switch(
+                              value: state.s3Config.usePathStyle,
+                              activeColor: VibeTheme.primaryNeon,
+                              onChanged: (val) {
+                                state.updateS3Config(state.s3Config.copyWith(usePathStyle: val));
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        ElevatedButton.icon(
+                          onPressed: _isTestingS3 ? null : () => _testS3(state),
+                          icon: _isTestingS3
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.network_check),
+                          label: const Text('测试 S3 连通性并保存'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PresetOptionButton extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PresetOptionButton({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      color: isSelected ? const Color(0xFF1E2D42) : VibeTheme.cardSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isSelected ? VibeTheme.primaryNeon : const Color(0xFF37474F),
+          width: isSelected ? 1.5 : 1.0,
+        ),
+      ),
+      child: ListTile(
+        dense: true,
+        leading: Icon(icon, color: isSelected ? VibeTheme.primaryNeon : VibeTheme.textSecondary),
+        title: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary, fontFamily: 'monospace'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: isSelected
+            ? const Icon(Icons.check_circle, color: VibeTheme.primaryNeon, size: 20)
+            : const Icon(Icons.circle_outlined, size: 20, color: Colors.grey),
+        onTap: onTap,
       ),
     );
   }

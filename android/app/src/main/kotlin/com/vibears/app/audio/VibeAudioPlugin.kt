@@ -138,6 +138,26 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 requestBatteryOptimizations()
                 result.success(true)
             }
+            "getDefaultStorageDirectory" -> {
+                val path = resolveDefaultPublicStorageDir()
+                result.success(path)
+            }
+            "getStoragePresets" -> {
+                val presets = getAvailableStoragePresets()
+                result.success(presets)
+            }
+            "isManageStorageGranted" -> {
+                val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    android.os.Environment.isExternalStorageManager()
+                } else {
+                    true
+                }
+                result.success(granted)
+            }
+            "requestManageStoragePermission" -> {
+                requestManageStorage()
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
     }
@@ -228,6 +248,85 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
             if (pm != null && pkg != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
                 val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                     data = Uri.parse("package:$pkg")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context?.startActivity(intent)
+            }
+        }
+    }
+
+    private fun resolveDefaultPublicStorageDir(): String {
+        try {
+            val musicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+            val vibeMusicDir = java.io.File(musicDir, "vibeARS")
+            if (vibeMusicDir.exists() || vibeMusicDir.mkdirs()) {
+                return vibeMusicDir.absolutePath
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create public Music directory: ${e.message}")
+        }
+
+        try {
+            val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val vibeDownloadDir = java.io.File(downloadDir, "vibeARS")
+            if (vibeDownloadDir.exists() || vibeDownloadDir.mkdirs()) {
+                return vibeDownloadDir.absolutePath
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create public Download directory: ${e.message}")
+        }
+
+        val externalFiles = context?.getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC)
+        if (externalFiles != null && (externalFiles.exists() || externalFiles.mkdirs())) {
+            return externalFiles.absolutePath
+        }
+
+        val appDir = java.io.File(context?.filesDir, "vibe_recordings")
+        if (!appDir.exists()) {
+            appDir.mkdirs()
+        }
+        return appDir.absolutePath
+    }
+
+    private fun getAvailableStoragePresets(): Map<String, String> {
+        val presets = mutableMapOf<String, String>()
+        try {
+            val musicDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+            presets["public_music"] = java.io.File(musicDir, "vibeARS").absolutePath
+        } catch (_: Exception) {}
+
+        try {
+            val extDir = android.os.Environment.getExternalStorageDirectory()
+            presets["public_recordings"] = java.io.File(extDir, "Recordings/vibeARS").absolutePath
+        } catch (_: Exception) {}
+
+        try {
+            val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            presets["public_download"] = java.io.File(downloadDir, "vibeARS").absolutePath
+        } catch (_: Exception) {}
+
+        try {
+            val docsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+            presets["public_documents"] = java.io.File(docsDir, "vibeARS").absolutePath
+        } catch (_: Exception) {}
+
+        val appDir = java.io.File(context?.filesDir, "vibe_recordings")
+        presets["app_sandbox"] = appDir.absolutePath
+
+        return presets
+    }
+
+    private fun requestManageStorage() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val pkg = context?.packageName
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$pkg")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context?.startActivity(intent)
+            } catch (e: Exception) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 context?.startActivity(intent)

@@ -165,9 +165,11 @@ class AppState extends ChangeNotifier {
       _streaming.connect();
     }
 
+    final storagePath = await _storage.getActiveStoragePath();
     final success = await _audioEngine.startRecording(
       audioConfig: _audioConfig,
       slicerConfig: _slicerConfig,
+      storagePath: storagePath,
     );
 
     if (success) {
