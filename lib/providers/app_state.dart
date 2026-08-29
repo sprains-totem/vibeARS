@@ -74,6 +74,14 @@ class AppState extends ChangeNotifier {
     await _storage.initialize();
     await _uploadQueue.loadHistory();
 
+    // Bridge notifications from child services so that any UI that watches
+    // AppState also rebuilds when playback/upload/streaming state changes.
+    // Without this, tapping play (or an upload progress tick) would never
+    // refresh the screens.
+    _storage.addListener(_forwardNotification);
+    _uploadQueue.addListener(_forwardNotification);
+    _streaming.addListener(_forwardNotification);
+
     _uploadQueue.configure(
       webdavConfig: _webdavConfig,
       s3Config: _s3Config,
@@ -218,6 +226,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _forwardNotification() {
+    notifyListeners();
+  }
+
   void _startDurationTimer() {
     _durationTimer?.cancel();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -323,6 +335,9 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _storage.removeListener(_forwardNotification);
+    _uploadQueue.removeListener(_forwardNotification);
+    _streaming.removeListener(_forwardNotification);
     _audioFrameSub?.cancel();
     _sliceCompletedSub?.cancel();
     _durationTimer?.cancel();

@@ -102,6 +102,31 @@ class UploadQueueManager extends ChangeNotifier {
     _saveHistory();
   }
 
+  /// Removes a single slice from the queue and history. If [deleteLocalFile]
+  /// is true the local recording file is also deleted from disk.
+  Future<bool> removeSlice(String sliceId, {bool deleteLocalFile = false}) async {
+    final items = _items.where((i) => i.id == sliceId).toList();
+    if (items.isEmpty) return false;
+    final item = items.first;
+
+    _items.remove(item);
+    _pendingQueue.remove(item);
+    notifyListeners();
+    await _saveHistory();
+
+    if (deleteLocalFile) {
+      try {
+        final file = File(item.localPath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        print('[UploadQueueManager] Error deleting slice file: $e');
+      }
+    }
+    return true;
+  }
+
   Future<void> _processNext() async {
     if (_isProcessing) return;
     if (_pendingQueue.isEmpty) {

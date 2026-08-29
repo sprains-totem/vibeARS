@@ -61,6 +61,31 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
     _localPathController = TextEditingController(text: storage.customStoragePath);
 
     _checkStoragePermission();
+    _probePresets();
+  }
+
+  Future<void> _probePresets() async {
+    final storage = context.read<AppState>().storage;
+    await storage.checkStoragePresetAvailability();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _applyStoragePath(AppState state, String path) async {
+    final ok = await state.storage.setStoragePath(path);
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? '已切换存储路径至: $path'
+              : (state.storage.lastStoragePathError ?? '路径不可写，未能应用'),
+        ),
+        backgroundColor: ok ? VibeTheme.successGreen : VibeTheme.errorRed,
+      ),
+    );
   }
 
   Future<void> _checkStoragePermission() async {
@@ -68,6 +93,32 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
     if (mounted) {
       setState(() => _isManageStorageGranted = granted);
     }
+  }
+
+  void _showPermissionGuide(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF192230),
+        title: const Text('需要“所有文件访问权限”'),
+        content: const Text(
+          'Android 11+ 系统要求授予“所有文件访问权限”才能写入公共文件夹。\n\n'
+          '请点击“打开系统设置授权”，在系统设置中开启“允许访问所有文件”后返回重试。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AudioEngineService.instance.requestManageStoragePermission();
+              await _checkStoragePermission();
+              await _probePresets();
+            },
+            child: const Text('打开系统设置授权'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -232,9 +283,14 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                             icon: Icons.music_note,
                             isSelected: storage.customStoragePath == storage.storagePresets['public_music'] ||
                                 (storage.customStoragePath.isEmpty && Platform.isAndroid),
-                            onTap: () {
+                            available: storage.presetAvailability['public_music'] ?? true,
+                            onTap: () async {
                               _localPathController.text = storage.storagePresets['public_music']!;
-                              storage.setStoragePath(storage.storagePresets['public_music']!);
+                              if (storage.presetAvailability['public_music'] == false) {
+                                _showPermissionGuide(context);
+                                return;
+                              }
+                              await _applyStoragePath(state, storage.storagePresets['public_music']!);
                             },
                           ),
 
@@ -244,9 +300,14 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                             subtitle: storage.storagePresets['public_recordings']!,
                             icon: Icons.mic,
                             isSelected: storage.customStoragePath == storage.storagePresets['public_recordings'],
-                            onTap: () {
+                            available: storage.presetAvailability['public_recordings'] ?? true,
+                            onTap: () async {
                               _localPathController.text = storage.storagePresets['public_recordings']!;
-                              storage.setStoragePath(storage.storagePresets['public_recordings']!);
+                              if (storage.presetAvailability['public_recordings'] == false) {
+                                _showPermissionGuide(context);
+                                return;
+                              }
+                              await _applyStoragePath(state, storage.storagePresets['public_recordings']!);
                             },
                           ),
 
@@ -256,9 +317,14 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                             subtitle: storage.storagePresets['public_download']!,
                             icon: Icons.download,
                             isSelected: storage.customStoragePath == storage.storagePresets['public_download'],
-                            onTap: () {
+                            available: storage.presetAvailability['public_download'] ?? true,
+                            onTap: () async {
                               _localPathController.text = storage.storagePresets['public_download']!;
-                              storage.setStoragePath(storage.storagePresets['public_download']!);
+                              if (storage.presetAvailability['public_download'] == false) {
+                                _showPermissionGuide(context);
+                                return;
+                              }
+                              await _applyStoragePath(state, storage.storagePresets['public_download']!);
                             },
                           ),
 
@@ -268,9 +334,10 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                             subtitle: storage.storagePresets['app_sandbox']!,
                             icon: Icons.security,
                             isSelected: storage.customStoragePath == storage.storagePresets['app_sandbox'],
-                            onTap: () {
+                            available: storage.presetAvailability['app_sandbox'] ?? true,
+                            onTap: () async {
                               _localPathController.text = storage.storagePresets['app_sandbox']!;
-                              storage.setStoragePath(storage.storagePresets['app_sandbox']!);
+                              await _applyStoragePath(state, storage.storagePresets['app_sandbox']!);
                             },
                           ),
 
@@ -292,17 +359,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           onPressed: () async {
                             final custom = _localPathController.text.trim();
                             if (custom.isNotEmpty) {
-                              final ok = await storage.setStoragePath(custom);
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      ok ? '已保存并切换至: $custom' : '路径不可写，未能应用: $custom',
-                                    ),
-                                    backgroundColor: ok ? VibeTheme.successGreen : VibeTheme.errorRed,
-                                  ),
-                                );
-                              }
+                              await _applyStoragePath(state, custom);
                             }
                           },
                           icon: const Icon(Icons.check),
@@ -762,6 +819,7 @@ class _PresetOptionButton extends StatelessWidget {
   final String subtitle;
   final IconData icon;
   final bool isSelected;
+  final bool available;
   final VoidCallback onTap;
 
   const _PresetOptionButton({
@@ -769,6 +827,7 @@ class _PresetOptionButton extends StatelessWidget {
     required this.subtitle,
     required this.icon,
     required this.isSelected,
+    this.available = true,
     required this.onTap,
   });
 
@@ -780,13 +839,18 @@ class _PresetOptionButton extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isSelected ? VibeTheme.primaryNeon : const Color(0xFF37474F),
+          color: isSelected
+              ? VibeTheme.primaryNeon
+              : (available ? const Color(0xFF37474F) : VibeTheme.errorRed.withOpacity(0.6)),
           width: isSelected ? 1.5 : 1.0,
         ),
       ),
       child: ListTile(
         dense: true,
-        leading: Icon(icon, color: isSelected ? VibeTheme.primaryNeon : VibeTheme.textSecondary),
+        leading: Icon(
+          icon,
+          color: isSelected ? VibeTheme.primaryNeon : VibeTheme.textSecondary,
+        ),
         title: Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
         subtitle: Text(
           subtitle,
@@ -794,9 +858,36 @@ class _PresetOptionButton extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: isSelected
-            ? const Icon(Icons.check_circle, color: VibeTheme.primaryNeon, size: 20)
-            : const Icon(Icons.circle_outlined, size: 20, color: Colors.grey),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!available)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: VibeTheme.errorRed.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: VibeTheme.errorRed.withOpacity(0.5)),
+                ),
+                child: const Text(
+                  '需授权',
+                  style: TextStyle(fontSize: 10, color: VibeTheme.errorRed, fontWeight: FontWeight.bold),
+                ),
+              )
+            else
+              Icon(
+                Icons.check_circle,
+                size: 14,
+                color: isSelected ? VibeTheme.primaryNeon : VibeTheme.successGreen.withOpacity(0.7),
+              ),
+            const SizedBox(width: 4),
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+              size: 18,
+              color: isSelected ? VibeTheme.primaryNeon : Colors.grey,
+            ),
+          ],
+        ),
         onTap: onTap,
       ),
     );

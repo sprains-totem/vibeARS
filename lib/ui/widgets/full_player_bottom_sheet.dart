@@ -259,7 +259,7 @@ class FullPlayerBottomSheet extends StatelessWidget {
                     size: 36,
                     color: Colors.black,
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     if (storage.playerState == PlayerState.playing) {
                       storage.pausePlayer();
                     } else if (storage.playerState == PlayerState.paused ||
@@ -267,7 +267,15 @@ class FullPlayerBottomSheet extends StatelessWidget {
                       storage.resumePlayer();
                     } else {
                       // stopped: (re)start the current file
-                      storage.playFile(file.path);
+                      final ok = await storage.playFile(file.path);
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(storage.lastPlayError ?? '播放失败'),
+                            backgroundColor: VibeTheme.errorRed,
+                          ),
+                        );
+                      }
                     }
                   },
                 ),

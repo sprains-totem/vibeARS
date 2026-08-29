@@ -68,6 +68,9 @@ class LocalStorageService extends ChangeNotifier {
   // Custom storage directory path
   String _customStoragePath = '';
   Map<String, String> _storagePresets = {};
+  Map<String, bool> _presetAvailability = {};
+  String? _lastStoragePathError;
+  String? _lastPlayError;
 
   // Batch selection
   bool _isSelectionMode = false;
@@ -83,6 +86,9 @@ class LocalStorageService extends ChangeNotifier {
   PlayMode get playMode => _playMode;
   String get customStoragePath => _customStoragePath;
   Map<String, String> get storagePresets => Map.unmodifiable(_storagePresets);
+  Map<String, bool> get presetAvailability => Map.unmodifiable(_presetAvailability);
+  String? get lastStoragePathError => _lastStoragePathError;
+  String? get lastPlayError => _lastPlayError;
 
   bool get isSelectionMode => _isSelectionMode;
   Set<String> get selectedPaths => Set.unmodifiable(_selectedPaths);
@@ -115,6 +121,8 @@ class LocalStorageService extends ChangeNotifier {
     _playbackSpeed = sp.getDouble('vibears_playback_speed') ?? 1.0;
 
     _storagePresets = await AudioEngineService.instance.getStoragePresets();
+    // Probe writability of each preset once at startup.
+    await checkStoragePresetAvailability();
 
     _player.onPlayerStateChanged.listen((state) {
       _playerState = state;
@@ -151,14 +159,17 @@ class LocalStorageService extends ChangeNotifier {
         await dir.create(recursive: true);
       }
       if (!await _isDirectoryWritable(dir)) {
-        print('[LocalStorageService] Path is not writable: $clean');
+        _lastStoragePathError = '目录不可写（可能缺少“所有文件访问权限”）: $clean';
+        print('[LocalStorageService] ${_lastStoragePathError}');
         return false;
       }
     } catch (e) {
-      print('[LocalStorageService] Failed to apply storage path: $e');
+      _lastStoragePathError = '无法创建目录: $clean (${e.toString()})';
+      print('[LocalStorageService] ${_lastStoragePathError}');
       return false;
     }
 
+    _lastStoragePathError = null;
     _customStoragePath = clean;
     final sp = await SharedPreferences.getInstance();
     await sp.setString('vibears_custom_storage_path', clean);
@@ -176,6 +187,32 @@ class LocalStorageService extends ChangeNotifier {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Probes every storage preset directory for writability. The result map
+  /// uses the same keys as [storagePresets].
+  Future<Map<String, bool>> checkStoragePresetAvailability() async {
+    if (_storagePresets.isEmpty) {
+      _storagePresets = await AudioEngineService.instance.getStoragePresets();
+    }
+    final result = <String, bool>{};
+    for (final entry in _storagePresets.entries) {
+      var writable = false;
+      try {
+        final dir = Directory(entry.value);
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        writable = await _isDirectoryWritable(dir);
+      } catch (e) {
+        print('[LocalStorageService] Preset ${entry.key} unavailable: $e');
+        writable = false;
+      }
+      result[entry.key] = writable;
+    }
+    _presetAvailability = result;
+    notifyListeners();
+    return Map.unmodifiable(result);
   }
 
   Future<String> getActiveStoragePath() async {
@@ -231,25 +268,49 @@ class LocalStorageService extends ChangeNotifier {
 
   // --- Advanced Player Methods ---
 
-  Future<void> playFile(String path) async {
+  /// Plays (or toggles) the given audio file. Returns false and records
+  /// [lastPlayError] when the file is missing or the player fails, so the UI
+  /// can surface real feedback instead of silently doing nothing.
+  Future<bool> playFile(String path) async {
     try {
+      final file = File(path);
+      if (!await file.exists()) {
+        _lastPlayError = '文件不存在: $path';
+        print('[LocalStorageService] ${_lastPlayError}');
+        if (_currentlyPlayingPath == path) {
+          _currentlyPlayingPath = null;
+        }
+        notifyListeners();
+        return false;
+      }
+
       if (_currentlyPlayingPath == path && _playerState == PlayerState.playing) {
         await _player.pause();
-        return;
+        return true;
       }
 
       if (_currentlyPlayingPath == path && _playerState == PlayerState.paused) {
         await _player.resume();
-        return;
+        return true;
       }
 
       _currentlyPlayingPath = path;
+      _lastPlayError = null;
       await _player.stop();
       await _player.setPlaybackRate(_playbackSpeed);
       await _player.setVolume(_volume);
       await _player.play(DeviceFileSource(path));
+      return true;
     } catch (e) {
-      print('[LocalStorageService] Error playing file: $e');
+      _lastPlayError = '播放失败: $path (${e.toString()})';
+      print('[LocalStorageService] ${_lastPlayError}');
+      // Roll back the current-track marker so the mini player does not stay
+      // stuck on a track that could not be started.
+      if (_currentlyPlayingPath == path) {
+        _currentlyPlayingPath = null;
+      }
+      notifyListeners();
+      return false;
     }
   }
 

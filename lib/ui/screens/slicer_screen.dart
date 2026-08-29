@@ -20,9 +20,28 @@ class SlicerScreen extends StatelessWidget {
         actions: [
           if (uploadQueue.items.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: '清空上传历史记录',
-              onPressed: () => uploadQueue.clearHistory(),
+              icon: const Icon(Icons.delete_sweep_outlined),
+              tooltip: '清空上传历史记录（不影响本地录音文件）',
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: const Color(0xFF192230),
+                    title: const Text('清空切片上传历史'),
+                    content: const Text('将从列表与历史记录中移除全部切片条目，但不会删除本地录音文件。'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+                      TextButton(
+                        onPressed: () {
+                          uploadQueue.clearHistory();
+                          Navigator.pop(ctx);
+                        },
+                        child: const Text('确认清空', style: TextStyle(color: VibeTheme.errorRed)),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
         ],
       ),
@@ -224,6 +243,61 @@ class SlicerScreen extends StatelessWidget {
                               tooltip: '重试上传',
                               onPressed: () => uploadQueue.retrySlice(item.id),
                             ),
+                          // Delete this slice entry (optionally removing the local file).
+                          PopupMenuButton<String>(
+                            color: VibeTheme.cardSurface,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            icon: const Icon(Icons.more_vert, size: 18, color: VibeTheme.textSecondary),
+                            onSelected: (action) {
+                              if (action == 'delete_entry') {
+                                uploadQueue.removeSlice(item.id, deleteLocalFile: false);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('已从切片队列移除'),
+                                    duration: Duration(seconds: 2),
+                                  ),
+                                );
+                              } else if (action == 'delete_file') {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor: const Color(0xFF192230),
+                                    title: const Text('删除切片与本地文件'),
+                                    content: const Text('将从队列移除该切片，并同时删除对应的本地录音文件（不可恢复）。'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: const Text('取消'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () {
+                                          uploadQueue.removeSlice(item.id, deleteLocalFile: true);
+                                          Navigator.pop(ctx);
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('切片已删除（含本地文件）'),
+                                              duration: Duration(seconds: 2),
+                                            ),
+                                          );
+                                        },
+                                        child: const Text('确认删除', style: TextStyle(color: VibeTheme.errorRed)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                            },
+                            itemBuilder: (ctx) => [
+                              const PopupMenuItem(
+                                value: 'delete_entry',
+                                child: Text('从队列移除（保留文件）'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'delete_file',
+                                child: Text('删除切片并删除本地文件'),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
 

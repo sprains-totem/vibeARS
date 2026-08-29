@@ -466,11 +466,20 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                         ),
                         child: InkWell(
                           borderRadius: BorderRadius.circular(14),
-                          onTap: () {
+                          onTap: () async {
                             if (storage.isSelectionMode) {
                               storage.toggleSelect(file.path);
                             } else {
-                              storage.playFile(file.path);
+                              final ok = await storage.playFile(file.path);
+                              if (!ok && mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(storage.lastPlayError ?? '播放失败'),
+                                    backgroundColor: VibeTheme.errorRed,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
                             }
                           },
                           onLongPress: () {
@@ -497,7 +506,18 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                                       color: isCurrent ? VibeTheme.primaryNeon : VibeTheme.textSecondary,
                                       size: 36,
                                     ),
-                                    onPressed: () => storage.playFile(file.path),
+                                    onPressed: () async {
+                                      final ok = await storage.playFile(file.path);
+                                      if (!ok && mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(storage.lastPlayError ?? '播放失败'),
+                                            backgroundColor: VibeTheme.errorRed,
+                                            duration: const Duration(seconds: 3),
+                                          ),
+                                        );
+                                      }
+                                    },
                                   ),
                                   const SizedBox(width: 4),
                                 ],
