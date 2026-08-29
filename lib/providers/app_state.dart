@@ -12,6 +12,7 @@ import '../core/models/storage_config.dart';
 import '../core/models/streaming_config.dart';
 import '../services/audio_engine_service.dart';
 import '../services/local_storage_service.dart';
+import '../services/log_collector.dart';
 import '../services/storage/upload_queue_manager.dart';
 import '../services/streaming_service.dart';
 
@@ -20,6 +21,8 @@ class AppState extends ChangeNotifier {
   final StreamingService _streaming = StreamingService.instance;
   final UploadQueueManager _uploadQueue = UploadQueueManager.instance;
   final LocalStorageService _storage = LocalStorageService.instance;
+
+  LogCollector get logCollector => LogCollector.instance;
 
   // Configurations
   AudioRecordingConfig _audioConfig = const AudioRecordingConfig();
@@ -69,6 +72,8 @@ class AppState extends ChangeNotifier {
   LocalStorageService get storage => _storage;
 
   Future<void> initialize() async {
+    await LogCollector.instance.initialize();
+    LogCollector.instance.log('AppState', 'vibeARS 启动');
     await _loadPreferences();
     await _audioEngine.initialize();
     await _storage.initialize();
@@ -143,6 +148,7 @@ class AppState extends ChangeNotifier {
 
     try {
       _devices = await _audioEngine.getAudioDevices();
+      LogCollector.instance.log('AppState', '设备枚举完成: ${_devices.length} 个输入设备');
       if (_devices.isNotEmpty) {
         if (_audioConfig.preferredDeviceId != null) {
           _selectedDevice = _devices.firstWhere(
@@ -174,6 +180,10 @@ class AppState extends ChangeNotifier {
     } else {
       _audioConfig = _audioConfig.copyWith(preferredDeviceId: device.id);
     }
+    LogCollector.instance.log(
+      'AppState',
+      '选择设备: ${device.name} (${device.type.name}, id=${device.id}) 格式=${_audioConfig.sampleRate}Hz/${_audioConfig.channelCount}ch',
+    );
     notifyListeners();
     await _savePreferences();
   }
@@ -195,6 +205,10 @@ class AppState extends ChangeNotifier {
           : (sampleRate ?? _audioConfig.sampleRate),
       channelCount: isSco ? 1 : (channelCount ?? _audioConfig.channelCount),
     );
+    LogCollector.instance.log(
+      'AppState',
+      '设备 ${device.name} 输出格式: ${_audioConfig.sampleRate}Hz / ${_audioConfig.channelCount}ch (SCO 自动 16kHz 单声道=$isSco)',
+    );
     notifyListeners();
     await _savePreferences();
   }
@@ -203,6 +217,7 @@ class AppState extends ChangeNotifier {
     // Request microphone permission
     final micStatus = await Permission.microphone.request();
     if (!micStatus.isGranted) {
+      LogCollector.instance.log('AppState', '麦克风权限被拒绝，录音无法启动');
       print('[AppState] Microphone permission denied');
       return false;
     }
@@ -212,6 +227,11 @@ class AppState extends ChangeNotifier {
       await Permission.bluetoothConnect.request();
       await _audioEngine.requestIgnoreBatteryOptimizations();
     }
+
+    LogCollector.instance.log(
+      'AppState',
+      '启动录音: 设备=${_selectedDevice?.name ?? "默认"} 采样率=${_audioConfig.sampleRate} 声道=${_audioConfig.channelCount} 格式=${_audioConfig.format.name} 码率=${_audioConfig.bitRate}',
+    );
 
     // Connect real-time streaming if enabled
     if (_streamingConfig.enabled && _streamingConfig.isValid) {
@@ -226,6 +246,8 @@ class AppState extends ChangeNotifier {
       uplinkAac: _streamingConfig.enabled &&
           _streamingConfig.protocol == StreamingProtocol.webSocketAac,
     );
+
+    LogCollector.instance.log('AppState', '录音启动结果: ${success ? "成功" : "失败"}');
 
     if (success) {
       _isRecording = true;
@@ -257,6 +279,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> stopRecording() async {
+    LogCollector.instance.log('AppState', '停止录音，本次时长 ${_recordingDurationSeconds}s');
     await _audioEngine.stopRecording();
     _isRecording = false;
     _isPaused = false;
@@ -270,6 +293,7 @@ class AppState extends ChangeNotifier {
     }
 
     await _storage.refreshFiles();
+    LogCollector.instance.log('AppState', '录音已停止并归档，录音库共 ${_storage.files.length} 个文件');
     notifyListeners();
   }
 

@@ -52,6 +52,12 @@ class AudioPipeline(
 
     private val audioDeviceManager = AudioDeviceManager(context)
 
+    /** Log to logcat AND forward to the in-app LogCollector. */
+    private fun nl(tag: String, message: String) {
+        Log.d(tag, message)
+        VibeAudioPlugin.reportNativeLog(tag, message)
+    }
+
     /** WAV (PCM + RIFF header) output. */
     private val isWavOutput: Boolean = format.lowercase() == "wav"
 
@@ -85,6 +91,7 @@ class AudioPipeline(
 
         val isSco = audioDeviceManager.isScoDevice(preferredDeviceId)
         Log.d(TAG, "start() isSco=$isSco preferredDeviceId=$preferredDeviceId")
+        nl(TAG, "start() isSco=$isSco preferredDeviceId=$preferredDeviceId")
 
         if (isSco) {
             // SCO activation is asynchronous (waits for the CONNECTED
@@ -103,6 +110,7 @@ class AudioPipeline(
         if (isRecording.get() && audioRecord != null) return true
 
         Log.d(TAG, "startCapture(awaitSco=$awaitSco) sampleRate=$sampleRate channels=$channelCount format=$format")
+        nl(TAG, "startCapture(awaitSco=$awaitSco) sampleRate=$sampleRate channels=$channelCount format=$format")
 
         // Validate that the output directory is actually writable before
         // starting the capture loop, otherwise the session would silently
@@ -167,6 +175,7 @@ class AudioPipeline(
                 bufferSize
             )
             Log.d(TAG, "AudioRecord created: source=$audioSource rate=$sampleRate ch=$channelConfig buf=$bufferSize state=${audioRecord?.state}")
+            nl(TAG, "AudioRecord created: source=$audioSource rate=$sampleRate ch=$channelConfig buf=$bufferSize state=${audioRecord?.state}")
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 listener.onError("AudioRecord failed to initialize")
@@ -183,6 +192,7 @@ class AudioPipeline(
             isPaused.set(false)
             audioRecord?.startRecording()
             Log.d(TAG, "AudioRecord.startRecording() OK")
+            nl(TAG, "AudioRecord.startRecording() OK")
 
             // Start the uplink AAC encoder if requested (ADTS stream output).
             if (uplinkAac) {

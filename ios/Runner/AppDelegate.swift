@@ -101,11 +101,18 @@ protocol AudioEngineDelegate: AnyObject {
     func onAudioFrame(pcmData: Data, amplitude: Double, db: Double, aacData: Data?)
     func onSliceCompleted(sliceInfo: [String: Any])
     func onError(errorMessage: String)
+    func onLog(tag: String, message: String)
 }
 
 class AudioEngineManager: NSObject {
     static let shared = AudioEngineManager()
     weak var delegate: AudioEngineDelegate?
+
+    /// Log to console AND forward to the in-app LogCollector.
+    private func nl(_ tag: String, _ message: String) {
+        print("[\(tag)] \(message)")
+        delegate?.onLog(tag: tag, message: message)
+    }
     
     private var audioEngine: AVAudioEngine?
     private var isRecording = false
@@ -168,6 +175,7 @@ class AudioEngineManager: NSObject {
         self.outputDirectory = URL(fileURLWithPath: outputDir)
         self.sliceSequence = 1
         self.sessionId = UUID().uuidString
+        nl("AudioEngineManager", "startRecording rate=\(sampleRate) ch=\(channelCount) fmt=\(format) uplinkAac=\(uplinkAac)")
         
         let session = AVAudioSession.sharedInstance()
         do {
@@ -180,10 +188,12 @@ class AudioEngineManager: NSObject {
             try session.setActive(true)
             
             if let preferredUid = preferredDeviceId {
-                _ = AudioDeviceManager.shared.setPreferredInput(uid: preferredUid)
+                let ok = AudioDeviceManager.shared.setPreferredInput(uid: preferredUid)
+                nl("AudioDeviceManager", "setPreferredInput(\(preferredUid)) -> \(ok)")
             }
         } catch {
             delegate?.onError(errorMessage: "Failed to configure AVAudioSession: \(error.localizedDescription)")
+            nl("AudioEngineManager", "AVAudioSession configure failed: \(error)")
             return false
         }
         
@@ -223,12 +233,14 @@ class AudioEngineManager: NSObject {
             try engine.start()
             isRecording = true
             isPaused = false
+            nl("AudioEngineManager", "AVAudioEngine started OK")
             return true
         } catch {
             // Clean up the slice file that was opened before engine start.
             closeCurrentSlice()
             audioEngine = nil
             delegate?.onError(errorMessage: "Failed to start AVAudioEngine: \(error.localizedDescription)")
+            nl("AudioEngineManager", "AVAudioEngine start failed: \(error)")
             return false
         }
     }
@@ -397,6 +409,7 @@ class AudioEngineManager: NSObject {
                     try audioFile.write(from: buffer)
                 } catch {
                     print("[AudioEngineManager] Error writing m4a: \(error)")
+                    delegate?.onLog(tag: "AudioEngineManager", message: "Error writing m4a: \(error)")
                 }
             }
         } else if let handle = currentSliceFileHandle {
@@ -559,9 +572,11 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
     private static let METHOD_CHANNEL = "com.vibears.app/audio_engine"
     private static let AUDIO_STREAM_CHANNEL = "com.vibears.app/audio_stream"
     private static let SLICE_STREAM_CHANNEL = "com.vibears.app/slice_stream"
+    private static let LOG_STREAM_CHANNEL = "com.vibears.app/log_stream"
     
     private var audioEventSink: FlutterEventSink?
     private var sliceEventSink: FlutterEventSink?
+    private var logEventSink: FlutterEventSink?
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let methodChannel = FlutterMethodChannel(name: METHOD_CHANNEL, binaryMessenger: registrar.messenger())
@@ -573,6 +588,9 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
         
         let sliceEventChannel = FlutterEventChannel(name: SLICE_STREAM_CHANNEL, binaryMessenger: registrar.messenger())
         sliceEventChannel.setStreamHandler(VibeAudioPlugin.SliceStreamHandler(plugin: instance))
+        
+        let logEventChannel = FlutterEventChannel(name: LOG_STREAM_CHANNEL, binaryMessenger: registrar.messenger())
+        logEventChannel.setStreamHandler(VibeAudioPlugin.LogStreamHandler(plugin: instance))
         
         AudioEngineManager.shared.delegate = instance
     }
@@ -664,6 +682,11 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
     
     func onError(errorMessage: String) {
         print("[VibeAudioPlugin] Error: \(errorMessage)")
+        logEventSink?(["tag": "VibeAudioPlugin", "message": "Error: \(errorMessage)"])
+    }
+    
+    func onLog(tag: String, message: String) {
+        logEventSink?(["tag": tag, "message": message])
     }
     
     class AudioStreamHandler: NSObject, FlutterStreamHandler {
@@ -688,6 +711,19 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
         }
         func onCancel(withArguments arguments: Any?) -> FlutterError? {
             plugin?.sliceEventSink = nil
+            return nil
+        }
+    }
+    
+    class LogStreamHandler: NSObject, FlutterStreamHandler {
+        private weak var plugin: VibeAudioPlugin?
+        init(plugin: VibeAudioPlugin) { self.plugin = plugin }
+        func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+            plugin?.logEventSink = events
+            return nil
+        }
+        func onCancel(withArguments arguments: Any?) -> FlutterError? {
+            plugin?.logEventSink = nil
             return nil
         }
     }

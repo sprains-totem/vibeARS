@@ -23,10 +23,12 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
     private val METHOD_CHANNEL_NAME = "com.vibears.app/audio_engine"
     private val AUDIO_STREAM_CHANNEL_NAME = "com.vibears.app/audio_stream"
     private val SLICE_STREAM_CHANNEL_NAME = "com.vibears.app/slice_stream"
+    private val LOG_STREAM_CHANNEL_NAME = "com.vibears.app/log_stream"
 
     private lateinit var methodChannel: MethodChannel
     private lateinit var audioEventChannel: EventChannel
     private lateinit var sliceEventChannel: EventChannel
+    private lateinit var logEventChannel: EventChannel
 
     private var context: Context? = null
     private var activity: Activity? = null
@@ -34,6 +36,22 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
 
     private var audioSink: EventChannel.EventSink? = null
     private var sliceSink: EventChannel.EventSink? = null
+    private var logSink: EventChannel.EventSink? = null
+
+    companion object {
+        @Volatile
+        private var plugin: VibeAudioPlugin? = null
+
+        /** Forward a diagnostic log line from native audio code to the
+         *  in-app LogCollector (shown and exportable without a computer). */
+        @JvmStatic
+        fun reportNativeLog(tag: String, message: String) {
+            val p = plugin ?: return
+            p.activity?.runOnUiThread {
+                p.logSink?.success(mapOf("tag" to tag, "message" to message))
+            }
+        }
+    }
 
     private var audioCaptureService: AudioCaptureService? = null
     private var isServiceBound = false
@@ -56,6 +74,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
         audioDeviceManager = AudioDeviceManager(binding.applicationContext)
+        plugin = this
 
         methodChannel = MethodChannel(binding.binaryMessenger, METHOD_CHANNEL_NAME)
         methodChannel.setMethodCallHandler(this)
@@ -81,12 +100,25 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 sliceSink = null
             }
         })
+
+        logEventChannel = EventChannel(binding.binaryMessenger, LOG_STREAM_CHANNEL_NAME)
+        logEventChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                logSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                logSink = null
+            }
+        })
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        plugin = null
         methodChannel.setMethodCallHandler(null)
         audioEventChannel.setStreamHandler(null)
         sliceEventChannel.setStreamHandler(null)
+        logEventChannel.setStreamHandler(null)
         unbindCaptureService()
         context = null
     }

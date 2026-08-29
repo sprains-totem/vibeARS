@@ -17,12 +17,18 @@ class AudioDeviceManager(private val context: Context) {
     private val TAG = "AudioDeviceManager"
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+    /** Log to logcat AND forward to the in-app LogCollector. */
+    private fun nl(tag: String, message: String) {
+        Log.d(tag, message)
+        VibeAudioPlugin.reportNativeLog(tag, message)
+    }
+
     fun getAvailableInputDevices(): List<Map<String, Any>> {
         val result = mutableListOf<Map<String, Any>>()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
-            Log.d(TAG, "Enumerating input devices: ${devices.size} found")
+            nl(TAG, "Enumerating input devices: ${devices.size} found")
             for (device in devices) {
                 val deviceMap = mutableMapOf<String, Any>()
                 deviceMap["id"] = device.id.toString()
@@ -57,7 +63,7 @@ class AudioDeviceManager(private val context: Context) {
                 }
                 deviceMap["encodings"] = encodings
 
-                Log.d(
+                nl(
                     TAG,
                     "Device #${device.id}: type=${getDeviceTypeName(device.type)} name=${deviceMap["name"]} " +
                         "rates=$sampleRates channels=$channelCounts enc=$encodings"
@@ -86,7 +92,7 @@ class AudioDeviceManager(private val context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
         val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
         val isSco = target?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-        Log.d(TAG, "isScoDevice($deviceId) = $isSco (target=$target)")
+        nl(TAG, "isScoDevice($deviceId) = $isSco (target=$target)")
         return isSco
     }
 
@@ -110,16 +116,16 @@ class AudioDeviceManager(private val context: Context) {
             // Modern API: synchronous-ish communication device selection.
             return try {
                 if (target == null) {
-                    Log.e(TAG, "SCO device $deviceId no longer present")
+                    nl(TAG, "SCO device $deviceId no longer present")
                     return false
                 }
                 audioManager.setCommunicationDevice(target)
-                Log.d(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
+                nl(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
                 // Give the framework a moment to route before AudioRecord init.
                 Thread.sleep(300)
                 true
             } catch (e: Exception) {
-                Log.e(TAG, "setCommunicationDevice failed: ${e.message}")
+                nl(TAG, "setCommunicationDevice failed: ${e.message}")
                 false
             }
         }
@@ -130,7 +136,7 @@ class AudioDeviceManager(private val context: Context) {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED) {
                     val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
-                    Log.d(TAG, "SCO_AUDIO_STATE_UPDATED state=$state (0=disconnected,1=connecting,2=connected)")
+                    nl(TAG, "SCO_AUDIO_STATE_UPDATED state=$state (0=disconnected,1=connecting,2=connected)")
                     if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
                         latch.countDown()
                     }
@@ -146,26 +152,26 @@ class AudioDeviceManager(private val context: Context) {
                 context.registerReceiver(receiver, filter)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to register SCO receiver: ${e.message}")
+            nl(TAG, "Failed to register SCO receiver: ${e.message}")
         }
 
         try {
             audioManager.startBluetoothSco()
-            Log.d(TAG, "startBluetoothSco() called, waiting for CONNECTED...")
+            nl(TAG, "startBluetoothSco() called, waiting for CONNECTED...")
         } catch (e: Exception) {
-            Log.e(TAG, "startBluetoothSco failed: ${e.message}")
+            nl(TAG, "startBluetoothSco failed: ${e.message}")
         }
 
         val connected = try {
             latch.await(4, TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
-            Log.e(TAG, "Interrupted while waiting for SCO: ${e.message}")
+            nl(TAG, "Interrupted while waiting for SCO: ${e.message}")
             false
         }
         try {
             context.unregisterReceiver(receiver)
         } catch (_: Exception) {}
-        Log.d(TAG, "SCO route ready: $connected")
+        nl(TAG, "SCO route ready: $connected")
         return connected
     }
 
@@ -179,9 +185,9 @@ class AudioDeviceManager(private val context: Context) {
                     audioManager.isBluetoothScoOn = false
                 }
             }
-            Log.d(TAG, "Bluetooth route stopped")
+            nl(TAG, "Bluetooth route stopped")
         } catch (e: Exception) {
-            Log.e(TAG, "Error stopping Bluetooth route: ${e.message}")
+            nl(TAG, "Error stopping Bluetooth route: ${e.message}")
         }
     }
 
@@ -195,7 +201,7 @@ class AudioDeviceManager(private val context: Context) {
         } else {
             MediaRecorder.AudioSource.MIC
         }
-        Log.d(TAG, "resolveAudioSource($deviceId) = $source")
+        nl(TAG, "resolveAudioSource($deviceId) = $source")
         return source
     }
 
@@ -205,7 +211,7 @@ class AudioDeviceManager(private val context: Context) {
             val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
             if (target != null) {
                 val success = audioRecord.setPreferredDevice(target)
-                Log.d(TAG, "setPreferredDevice ($deviceId) -> $success")
+                nl(TAG, "setPreferredDevice ($deviceId) -> $success")
                 return success
             }
         }

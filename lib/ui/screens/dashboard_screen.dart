@@ -4,6 +4,7 @@ import '../../core/models/streaming_config.dart';
 import '../../providers/app_state.dart';
 import '../theme.dart';
 import '../widgets/waveform_visualizer.dart';
+import 'diagnostics_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -27,6 +28,15 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('vibeARS 录音工作台'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report_outlined),
+            tooltip: '诊断日志 (一键导出)',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: '刷新硬件与状态',

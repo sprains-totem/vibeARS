@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import '../core/models/audio_config.dart';
 import '../core/models/audio_device.dart';
 import '../core/models/slicer_config.dart';
+import 'log_collector.dart';
 
 class AudioEngineService {
   static final AudioEngineService instance = AudioEngineService._internal();
@@ -13,9 +14,11 @@ class AudioEngineService {
   static const MethodChannel _methodChannel = MethodChannel('com.vibears.app/audio_engine');
   static const EventChannel _audioStreamChannel = EventChannel('com.vibears.app/audio_stream');
   static const EventChannel _sliceStreamChannel = EventChannel('com.vibears.app/slice_stream');
+  static const EventChannel _logStreamChannel = EventChannel('com.vibears.app/log_stream');
 
   StreamSubscription? _audioSubscription;
   StreamSubscription? _sliceSubscription;
+  StreamSubscription? _logSubscription;
 
   final _waveformController = StreamController<Map<String, dynamic>>.broadcast();
   final _sliceController = StreamController<Map<String, dynamic>>.broadcast();
@@ -49,6 +52,20 @@ class AudioEngineService {
       },
       onError: (err) {
         print('[AudioEngineService] SliceStream error: $err');
+      },
+    );
+
+    // Native audio engine logs -> in-app LogCollector (viewable & exportable).
+    _logSubscription = _logStreamChannel.receiveBroadcastStream().listen(
+      (data) {
+        if (data is Map) {
+          final tag = data['tag']?.toString() ?? 'Native';
+          final message = data['message']?.toString() ?? '';
+          LogCollector.instance.log(tag, message);
+        }
+      },
+      onError: (err) {
+        print('[AudioEngineService] LogStream error: $err');
       },
     );
   }
@@ -236,6 +253,7 @@ class AudioEngineService {
   void dispose() {
     _audioSubscription?.cancel();
     _sliceSubscription?.cancel();
+    _logSubscription?.cancel();
     _waveformController.close();
     _sliceController.close();
   }
