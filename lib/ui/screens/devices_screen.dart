@@ -181,6 +181,64 @@ class DevicesScreen extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                              const SizedBox(height: 12),
+
+                              // Selected output format + format picker
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? VibeTheme.primaryNeon.withOpacity(0.08)
+                                      : VibeTheme.cardSurface,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? VibeTheme.primaryNeon.withOpacity(0.5)
+                                        : const Color(0xFF37474F),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.tune, size: 16, color: VibeTheme.primaryNeon),
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          '输出格式 (采集参数)',
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                        ),
+                                        const Spacer(),
+                                        if (isSelected)
+                                          Text(
+                                            '${state.audioConfig.sampleRate / 1000} kHz · ${state.audioConfig.channelCount == 1 ? "单声道" : "双声道"}',
+                                            style: const TextStyle(fontSize: 11, color: VibeTheme.primaryNeon, fontWeight: FontWeight.w600),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      isSelected
+                                          ? '录音时将使用上方参数采集。'
+                                          : '点击选择该设备采集时使用的采样率与声道（仅在选中该设备后生效）。',
+                                      style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        minimumSize: const Size(double.infinity, 36),
+                                        foregroundColor: VibeTheme.primaryNeon,
+                                        side: const BorderSide(color: VibeTheme.primaryNeon),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      ),
+                                      icon: const Icon(Icons.tune, size: 16),
+                                      label: const Text('选择该设备输出格式', style: TextStyle(fontSize: 12)),
+                                      onPressed: () => _showFormatPicker(context, state, device),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -188,6 +246,134 @@ class DevicesScreen extends StatelessWidget {
                     );
                   },
                 ),
+    );
+  }
+
+  void _showFormatPicker(BuildContext context, AppState state, AudioInputDevice device) {
+    // Local mutable selections inside the bottom sheet.
+    var selectedSr = state.audioConfig.sampleRate;
+    var selectedCh = state.audioConfig.channelCount;
+
+    // Prefer values the device actually supports.
+    if (!device.sampleRates.contains(selectedSr) && device.sampleRates.isNotEmpty) {
+      selectedSr = device.sampleRates.first;
+    }
+    if (!device.channelCounts.contains(selectedCh) && device.channelCounts.isNotEmpty) {
+      selectedCh = device.channelCounts.first;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF161E2B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20, right: 20, top: 16,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '选择「${device.name}」的输出格式',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '选择后点击确认，该设置将在下一次录音时生效。',
+                    style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 16),
+
+                  const Text('采样率 (Sample Rate)：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: device.sampleRates.map((sr) {
+                      final isSel = selectedSr == sr;
+                      return ChoiceChip(
+                        label: Text('${sr / 1000} kHz'),
+                        selected: isSel,
+                        selectedColor: VibeTheme.primaryNeon,
+                        labelStyle: TextStyle(
+                          color: isSel ? Colors.black : Colors.white,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        ),
+                        onSelected: (_) => setSheetState(() => selectedSr = sr),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  const Text('声道数 (Channels)：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: device.channelCounts.map((ch) {
+                      final isSel = selectedCh == ch;
+                      return ChoiceChip(
+                        label: Text(ch == 1 ? '单声道 (Mono)' : '双声道 (Stereo)'),
+                        selected: isSel,
+                        selectedColor: VibeTheme.primaryNeon,
+                        labelStyle: TextStyle(
+                          color: isSel ? Colors.black : Colors.white,
+                          fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                        ),
+                        onSelected: (_) => setSheetState(() => selectedCh = ch),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  const Text('编码格式 (Encoding)：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: device.encodings.map((enc) {
+                      return _CapabilityChip(
+                        label: enc,
+                        icon: Icons.code,
+                        color: Colors.tealAccent,
+                      );
+                    }).toList(),
+                  ),
+                  const Text(
+                    '原生采集统一为 16-bit PCM 编码；列表为该设备可用的硬件编码格式。',
+                    style: TextStyle(fontSize: 10, color: VibeTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        state.selectDeviceFormat(device, sampleRate: selectedSr, channelCount: selectedCh);
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('已保存该设备的输出格式，下次录音生效'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.check),
+                      label: const Text('确认使用此格式'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

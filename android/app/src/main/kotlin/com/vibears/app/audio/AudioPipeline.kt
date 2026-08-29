@@ -4,6 +4,9 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.os.Handler
 import android.os.Looper
 import android.util.Log

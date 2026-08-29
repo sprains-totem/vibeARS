@@ -168,6 +168,23 @@ class AppState extends ChangeNotifier {
     await _savePreferences();
   }
 
+  /// Selects a device AND the output format (sample rate / channel count)
+  /// it should capture in. Takes effect on the next recording session.
+  Future<void> selectDeviceFormat(
+    AudioInputDevice device, {
+    int? sampleRate,
+    int? channelCount,
+  }) async {
+    _selectedDevice = device;
+    _audioConfig = _audioConfig.copyWith(
+      preferredDeviceId: device.id,
+      sampleRate: sampleRate ?? _audioConfig.sampleRate,
+      channelCount: channelCount ?? _audioConfig.channelCount,
+    );
+    notifyListeners();
+    await _savePreferences();
+  }
+
   Future<bool> startRecording() async {
     // Request microphone permission
     final micStatus = await Permission.microphone.request();
