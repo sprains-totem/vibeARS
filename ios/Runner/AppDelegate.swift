@@ -265,7 +265,11 @@ class AudioEngineManager: NSObject {
             AVNumberOfChannelsKey: Int(channelCount),
             AVEncoderBitRateKey: bitRate
         ]
-        guard let converter = AVAudioConverter(from: pcmFormat, to: settings) else {
+        guard let outputFormat = AVAudioFormat(settings: settings) else {
+            delegate?.onError(errorMessage: "Failed to create uplink AAC output format")
+            return
+        }
+        guard let converter = AVAudioConverter(from: pcmFormat, to: outputFormat) else {
             delegate?.onError(errorMessage: "Failed to create uplink AAC converter")
             return
         }
@@ -278,12 +282,9 @@ class AudioEngineManager: NSObject {
         uplinkInputProvided = false
     }
     
-    private var uplinkInputProvided = false
-    
     private func encodeUplinkAac(from input: AVAudioPCMBuffer) -> Data? {
         guard let converter = uplinkConverter, let output = uplinkCompressedBuffer else { return nil }
         
-        output.audioBufferList.pointee.mBuffers.mDataByteSize = 0
         uplinkInputProvided = false
         var error: NSError?
         let status = converter.convert(to: output, error: &error) { _, outStatus in
@@ -300,19 +301,27 @@ class AudioEngineManager: NSObject {
         
         // AVAudioConverter emits raw AAC; wrap it in an ADTS header so the
         // server can decode a continuous stream.
-        let payload = Data(bytes: output.data, count: output.byteLength)
+        let payload = Data(bytes: output.data, count: Int(output.byteLength))
         var header = Data(count: 7)
         let frameLength = payload.count + 7
         let sampleRateIndex = Self.adtsSampleRateIndex(sampleRate)
         let channelConfig = min(Int(channelCount), 7)
+        let b2 = UInt8(((2 & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01))
+        let b3 = UInt8(((channelConfig & 0x03) << 6) | ((frameLength >> 11) & 0x03))
+        let b4 = UInt8((frameLength >> 3) & 0xFF)
+        let b5 = UInt8(((frameLength & 0x07) << 5) | 0x1F)
         header[0] = 0xFF
         header[1] = 0xF1 // MPEG-4, no CRC
-        header[2] = UInt8(((2 & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01))
-        header[3] = UInt8(((channelConfig & 0x03) << 6) | ((frameLength >> 11) & 0x03))
-        header[4] = UInt8((frameLength >> 3) & 0xFF)
-        header[5] = UInt8(((frameLength & 0x07) << 5) | 0x1F)
-        header[6] = UInt8(0xFC)
-        return header + payload
+        header[2] = b2
+        header[3] = b3
+        header[4] = b4
+        header[5] = b5
+        header[6] = 0xFC
+        
+        var result = Data()
+        result.append(header)
+        result.append(payload)
+        return result
     }
     
     private static func adtsSampleRateIndex(_ rate: Double) -> Int {
