@@ -3,6 +3,10 @@ package com.vibears.app.audio
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
@@ -30,7 +34,8 @@ class AudioPipeline(
     private val context: Context,
     private val sampleRate: Int = 48000,
     private val channelCount: Int = 2,
-    private val format: String = "wav", // wav, aac, etc.
+    private val format: String = "wav", // wav | m4a
+    private val bitRate: Int = 128000,
     private val preferredDeviceId: Int? = null,
     private val slicerEnabled: Boolean = true,
     private val sliceDurationMs: Long = 5 * 60 * 1000L, // 5 minutes default
@@ -46,18 +51,27 @@ class AudioPipeline(
 
     private val audioDeviceManager = AudioDeviceManager(context)
 
-    // The native capture layer only emits raw PCM; recordings are ALWAYS
-    // stored as standard WAV (with a proper RIFF header) regardless of the
-    // requested format, so every file is playable and discoverable.
-    private val isWavOutput: Boolean = true
+    /** WAV (PCM + RIFF header) output. */
+    private val isWavOutput: Boolean = format.lowercase() == "wav"
+
+    /** AAC/M4A output via MediaCodec + MediaMuxer. */
+    private val isM4aOutput: Boolean = format.lowercase() in setOf("m4a", "aac")
 
     // Current slice file tracking
     private var currentSliceFile: File? = null
     private var currentSliceOutputStream: FileOutputStream? = null
     private var currentSlicePcmBytesWritten: Long = 0L
+    private var currentSliceFramesWritten: Long = 0L
     private var currentSliceStartTime: Long = 0L
     private var sliceSequence: Int = 1
     private val sessionId: String = UUID.randomUUID().toString()
+
+    // AAC encoder state (m4a only)
+    private var mediaCodec: MediaCodec? = null
+    private var mediaMuxer: MediaMuxer? = null
+    private var muxerTrackIndex: Int = -1
+    private var muxerStarted: Boolean = false
+    private var encoderPtsUs: Long = 0L
 
     fun start(): Boolean {
         if (isRecording.get()) return true
@@ -133,7 +147,7 @@ class AudioPipeline(
             recordThread = Thread({ recordLoop(bufferSize) }, "AudioCaptureThread")
             recordThread?.priority = Thread.MAX_PRIORITY
             recordThread?.start()
-            Log.d(TAG, "Audio recording pipeline started successfully")
+            Log.d(TAG, "Audio recording pipeline started (format=$format, bitRate=$bitRate)")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio recording", e)
@@ -154,7 +168,7 @@ class AudioPipeline(
     fun stop() {
         if (!isRecording.get()) return
         isRecording.set(false)
-        
+
         try {
             recordThread?.join(1000)
         } catch (e: Exception) {
@@ -179,6 +193,7 @@ class AudioPipeline(
         val bytesPerSample = 2 // 16-bit
         val bytesPerSecond = sampleRate * channelCount * bytesPerSample
         val maxBytesPerSlice = (sliceDurationMs * bytesPerSecond / 1000L)
+        val maxFramesPerSlice = sampleRate * sliceDurationMs / 1000L
 
         while (isRecording.get()) {
             if (isPaused.get()) {
@@ -190,6 +205,8 @@ class AudioPipeline(
 
             val readCount = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
             if (readCount > 0) {
+                val frames = readCount / channelCount
+
                 // 1. Calculate Amplitude and Decibel for UI visualizer
                 var sumSquare = 0.0
                 var maxSample = 0
@@ -217,29 +234,175 @@ class AudioPipeline(
                     listener.onAudioFrame(pcmBytes, normalizedAmplitude, db)
                 }
 
-                // 3. Write to the current slice file
                 try {
-                    currentSliceOutputStream?.write(pcmBytes)
-                    currentSlicePcmBytesWritten += pcmBytes.size
+                    if (isM4aOutput) {
+                        // Encode through MediaCodec and mux into the .m4a file.
+                        encodeAacFrame(pcmBytes, frames)
+                        currentSliceFramesWritten += frames
+                        if (slicerEnabled && currentSliceFramesWritten >= maxFramesPerSlice) {
+                            finishM4aSlice()
+                            if (!openNextSlice()) {
+                                listener.onError("Failed to create next slice file, recording stopped")
+                                isRecording.set(false)
+                            }
+                        }
+                    } else {
+                        // 3. Write to the current WAV slice file
+                        currentSliceOutputStream?.write(pcmBytes)
+                        currentSlicePcmBytesWritten += pcmBytes.size
 
-                    // 4. Check if slice duration reached -> Seamless Rollover
-                    if (slicerEnabled && currentSlicePcmBytesWritten >= maxBytesPerSlice) {
-                        closeCurrentSlice()
-                        if (!openNextSlice()) {
-                            // Failed to open the next slice: stop the session
-                            // rather than silently dropping all audio.
-                            listener.onError("Failed to create next slice file, recording stopped")
-                            isRecording.set(false)
+                        // 4. Check if slice duration reached -> Seamless Rollover
+                        if (slicerEnabled && currentSlicePcmBytesWritten >= maxBytesPerSlice) {
+                            closeCurrentSlice()
+                            if (!openNextSlice()) {
+                                listener.onError("Failed to create next slice file, recording stopped")
+                                isRecording.set(false)
+                            }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error writing audio slice bytes", e)
+                    Log.e(TAG, "Error writing audio slice", e)
                     listener.onError("Error writing audio slice: ${e.message}")
                     isRecording.set(false)
                 }
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // AAC (M4A) encoding via MediaCodec + MediaMuxer
+    // ------------------------------------------------------------------
+
+    private fun configureAacEncoder(): MediaCodec {
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount)
+        format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 100 * 1024)
+        format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+
+        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        codec.start()
+        encoderPtsUs = 0L
+        return codec
+    }
+
+    private fun encodeAacFrame(pcmBytes: ByteArray, frames: Int) {
+        val codec = mediaCodec ?: return
+        val muxer = mediaMuxer ?: return
+
+        val inIndex = codec.dequeueInputBuffer(10_000)
+        if (inIndex >= 0) {
+            val inBuf = codec.getInputBuffer(inIndex) ?: return
+            inBuf.clear()
+            inBuf.put(pcmBytes)
+            codec.queueInputBuffer(inIndex, 0, pcmBytes.size, encoderPtsUs, 0)
+        }
+        encoderPtsUs += frames * 1_000_000L / sampleRate
+
+        drainAacOutputs(muxer, endOfStream = false)
+    }
+
+    /** Writes one encoded sample to the muxer, stripping any ADTS header. */
+    private fun writeAacSample(
+        muxer: MediaMuxer,
+        codec: MediaCodec,
+        outIndex: Int,
+        info: MediaCodec.BufferInfo
+    ) {
+        val outBuf = codec.getOutputBuffer(outIndex) ?: return
+        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+            // Codec config is delivered via the muxer format; skip it.
+            return
+        }
+        if (!muxerStarted || info.size <= 0) return
+
+        var offset = info.offset
+        var size = info.size
+        // Some encoders emit an ADTS header; MediaMuxer needs raw AAC.
+        if (size > 0 && (outBuf.get(offset).toInt() and 0xFF) == 0xFF) {
+            val headerLen =
+                ((outBuf.get(offset + 1).toInt() and 0x03) shl 11) or
+                    ((outBuf.get(offset + 2).toInt() and 0xFF) shl 3) or
+                    ((outBuf.get(offset + 3).toInt() and 0xE0) shr 5)
+            offset += headerLen
+            size -= headerLen
+        }
+        if (size <= 0) return
+
+        outBuf.position(offset)
+        outBuf.limit(offset + size)
+        val sampleInfo = MediaCodec.BufferInfo()
+        sampleInfo.set(offset, size, info.presentationTimeUs, info.flags)
+        muxer.writeSampleData(muxerTrackIndex, outBuf, sampleInfo)
+    }
+
+    private fun drainAacOutputs(muxer: MediaMuxer, endOfStream: Boolean) {
+        val codec = mediaCodec ?: return
+        val info = MediaCodec.BufferInfo()
+
+        while (true) {
+            val outIndex = codec.dequeueOutputBuffer(info, if (endOfStream) 10_000 else 0)
+            when {
+                outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    if (!muxerStarted) {
+                        muxerTrackIndex = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                        muxerStarted = true
+                    }
+                }
+                outIndex >= 0 -> {
+                    writeAacSample(muxer, codec, outIndex, info)
+                    codec.releaseOutputBuffer(outIndex, false)
+                    if (endOfStream && info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                        return
+                    }
+                }
+                else -> {
+                    // INFO_TRY_AGAIN_LATER: nothing more available right now.
+                    if (!endOfStream) return
+                    // While finishing, keep draining until EOS flag or timeout.
+                    // The 10s timeout on dequeueOutputBuffer prevents a hang.
+                    if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    private fun finishM4aSlice() {
+        val codec = mediaCodec ?: return
+        val muxer = mediaMuxer ?: return
+
+        try {
+            // Signal end-of-stream and drain remaining encoded frames.
+            val inIndex = codec.dequeueInputBuffer(10_000)
+            if (inIndex >= 0) {
+                codec.queueInputBuffer(inIndex, 0, 0, encoderPtsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            }
+            drainAacOutputs(muxer, endOfStream = true)
+
+            codec.stop()
+            codec.release()
+            mediaCodec = null
+
+            if (muxerStarted) {
+                muxer.stop()
+            }
+            muxer.release()
+            mediaMuxer = null
+            muxerStarted = false
+            muxerTrackIndex = -1
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finalizing m4a slice", e)
+            listener.onError("Failed to finalize m4a slice: ${e.message}")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Slice file lifecycle
+    // ------------------------------------------------------------------
 
     private fun openNextSlice(): Boolean {
         return try {
@@ -248,20 +411,26 @@ class AudioPipeline(
                 dir.mkdirs()
             }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val extension = if (isWavOutput) "wav" else "pcm"
+            val extension = if (isM4aOutput) "m4a" else "wav"
             val fileName = "vibe_slice_${timeStamp}_part${sliceSequence}.$extension"
             val file = File(dir, fileName)
 
-            val fos = FileOutputStream(file)
-            if (isWavOutput) {
+            if (isM4aOutput) {
+                mediaMuxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                muxerStarted = false
+                muxerTrackIndex = -1
+                mediaCodec = configureAacEncoder()
+            } else {
+                val fos = FileOutputStream(file)
                 // Write 44-byte empty placeholder header for WAV
                 val emptyHeader = ByteArray(44)
                 fos.write(emptyHeader)
+                currentSliceOutputStream = fos
             }
 
             currentSliceFile = file
-            currentSliceOutputStream = fos
             currentSlicePcmBytesWritten = 0L
+            currentSliceFramesWritten = 0L
             currentSliceStartTime = System.currentTimeMillis()
             Log.d(TAG, "Opened new slice file: ${file.absolutePath}, sequence: $sliceSequence")
             true
@@ -274,21 +443,32 @@ class AudioPipeline(
 
     private fun closeCurrentSlice() {
         val file = currentSliceFile ?: return
-        val fos = currentSliceOutputStream ?: return
 
         try {
-            fos.flush()
-            fos.close()
+            if (isM4aOutput) {
+                finishM4aSlice()
+            } else {
+                val fos = currentSliceOutputStream
+                if (fos == null) {
+                    currentSliceFile = null
+                    return
+                }
+                fos.flush()
+                fos.close()
+                currentSliceOutputStream = null
 
-            val actualDurationMs = if (sampleRate > 0 && channelCount > 0) {
+                if (isWavOutput) {
+                    // Update WAV header with exact total length
+                    writeWavHeader(file, currentSlicePcmBytesWritten, sampleRate, channelCount, 16)
+                }
+            }
+
+            val actualDurationMs = if (isM4aOutput) {
+                (currentSliceFramesWritten * 1000L) / sampleRate
+            } else if (sampleRate > 0 && channelCount > 0) {
                 (currentSlicePcmBytesWritten * 1000L) / (sampleRate * channelCount * 2)
             } else {
                 System.currentTimeMillis() - currentSliceStartTime
-            }
-
-            if (isWavOutput) {
-                // Update WAV header with exact total length
-                writeWavHeader(file, currentSlicePcmBytesWritten, sampleRate, channelCount, 16)
             }
 
             val sizeBytes = file.length().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -311,6 +491,7 @@ class AudioPipeline(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error closing slice file", e)
+            listener.onError("Error closing slice file: ${e.message}")
         } finally {
             currentSliceOutputStream = null
             currentSliceFile = null

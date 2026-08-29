@@ -456,8 +456,9 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '原生采集引擎统一录制为标准 WAV (PCM 无损)，因此录音文件始终可保存、可播放。'
-                                  'AAC/MP3/Opus 等格式可通过“录音库”中的分享 / ZIP 打包 / 目录复制导出转换。',
+                                  '原生采集引擎支持 WAV (PCM 无损) 与 AAC/M4A 有损压缩两种录制格式，'
+                                  '选择 AAC 时下方码率设置将真实生效。MP3/Opus 需集成第三方编码库，'
+                                  '当前可通过“录音库”的分享 / ZIP 打包 / 目录复制导出转换。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),
@@ -471,19 +472,28 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           runSpacing: 8,
                           children: AudioFormatType.values.map((fmt) {
                             final isSelected = audioConfig.format == fmt;
-                            final isNativeSupported = fmt == AudioFormatType.wav;
+                            // WAV and AAC/M4A are natively recorded. MP3/Opus
+                            // need third-party encoder libraries; selecting
+                            // them explains the situation instead of silently
+                            // falling back.
+                            final isNativeSupported = fmt == AudioFormatType.wav || fmt == AudioFormatType.aacM4a;
                             return ChoiceChip(
                               label: Text(fmt.displayName),
                               selected: isSelected,
-                              // Native capture records WAV only; other formats
-                              // are produced via export (share/ZIP/copy).
                               onSelected: isNativeSupported
                                   ? (selected) {
                                       if (selected) {
                                         state.updateAudioConfig(audioConfig.copyWith(format: fmt));
                                       }
                                     }
-                                  : null,
+                                  : (_) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('${fmt.displayName} 编码需集成第三方编码库（LAME/libopus）；当前原生支持 WAV 与 AAC/M4A，其他格式可在录音库通过分享 / ZIP 打包导出转换。'),
+                                          duration: Duration(seconds: 4),
+                                        ),
+                                      );
+                                    },
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
                                 color: isSelected
@@ -577,9 +587,11 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           }).toList(),
                         ),
                         const SizedBox(height: 6),
-                        const Text(
-                          'WAV 为无损 PCM 编码，实际码率 = 采样率 × 声道数 × 16bit（如 48kHz 双声道约 1536 kbps）；码率选项预留给后续有损编码（AAC/MP3）使用。',
-                          style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                        Text(
+                          audioConfig.format == AudioFormatType.aacM4a
+                              ? '当前选择 AAC/M4A：码率设置将真实作用于编码器（如 128 kbps）。'
+                              : 'WAV 为无损 PCM 编码，实际码率 = 采样率 × 声道数 × 16bit（如 48kHz 双声道约 1536 kbps）；码率设置作用于 AAC 编码。',
+                          style: const TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                         ),
                         const Divider(height: 24, color: Color(0xFF2C394B)),
 

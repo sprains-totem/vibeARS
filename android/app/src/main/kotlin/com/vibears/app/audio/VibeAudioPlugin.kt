@@ -105,6 +105,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 val sampleRate = call.argument<Int>("sampleRate") ?: 48000
                 val channelCount = call.argument<Int>("channelCount") ?: 2
                 val format = call.argument<String>("format") ?: "wav"
+                val bitRate = call.argument<Int>("bitRate") ?: 128000
                 val preferredDeviceId = call.argument<Int>("preferredDeviceId")
                 val slicerEnabled = call.argument<Boolean>("slicerEnabled") ?: true
                 val sliceDurationMinutes = call.argument<Int>("sliceDurationMinutes") ?: 5
@@ -114,6 +115,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                     sampleRate,
                     channelCount,
                     format,
+                    bitRate,
                     preferredDeviceId,
                     slicerEnabled,
                     sliceDurationMinutes * 60 * 1000L,
@@ -166,6 +168,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
         sampleRate: Int,
         channelCount: Int,
         format: String,
+        bitRate: Int,
         preferredDeviceId: Int?,
         slicerEnabled: Boolean,
         sliceDurationMs: Long,
@@ -194,6 +197,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                     sampleRate = sampleRate,
                     channelCount = channelCount,
                     format = format,
+                    bitRate = bitRate,
                     preferredDeviceId = preferredDeviceId,
                     slicerEnabled = slicerEnabled,
                     sliceDurationMs = sliceDurationMs,

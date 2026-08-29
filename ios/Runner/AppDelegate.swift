@@ -114,15 +114,16 @@ class AudioEngineManager: NSObject {
     private var sampleRate: Double = 48000.0
     private var channelCount: AVAudioChannelCount = 2
     private var formatString: String = "wav"
+    private var bitRate: Int = 128000
     private var slicerEnabled: Bool = true
     private var sliceDurationSeconds: Double = 300.0
     private var outputDirectory: URL?
-    // Native capture emits PCM; recordings are ALWAYS stored as WAV so files
-    // are playable, regardless of the requested format.
-    private var isWavOutput: Bool { true }
+    private var isWavOutput: Bool { formatString == "wav" }
+    private var isM4aOutput: Bool { formatString == "m4a" || formatString == "aac" }
     
     private var currentSliceFileUrl: URL?
     private var currentSliceFileHandle: FileHandle?
+    private var currentSliceAudioFile: AVAudioFile?
     private var currentSlicePcmBytes: Int64 = 0
     private var currentSliceStartTime: Date?
     private var sliceSequence: Int = 1
@@ -142,6 +143,7 @@ class AudioEngineManager: NSObject {
         sampleRate: Double = 48000.0,
         channelCount: Int = 2,
         format: String = "wav",
+        bitRate: Int = 128000,
         preferredDeviceId: String? = nil,
         slicerEnabled: Bool = true,
         sliceDurationMinutes: Int = 5,
@@ -152,6 +154,7 @@ class AudioEngineManager: NSObject {
         self.sampleRate = sampleRate
         self.channelCount = AVAudioChannelCount(channelCount)
         self.formatString = format.lowercased()
+        self.bitRate = bitRate
         self.slicerEnabled = slicerEnabled
         self.sliceDurationSeconds = Double(sliceDurationMinutes * 60)
         self.outputDirectory = URL(fileURLWithPath: outputDir)
@@ -180,7 +183,18 @@ class AudioEngineManager: NSObject {
         guard let engine = audioEngine else { return false }
         
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+        // Request a concrete PCM format on the tap so the engine converts the
+        // hardware input to the user's sample rate / channel count. This is
+        // required for WAV headers and AAC file settings to match the data.
+        guard let pcmFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: AVAudioChannelCount(channelCount),
+            interleaved: false
+        ) else {
+            delegate?.onError(errorMessage: "Failed to create target PCM format")
+            return false
+        }
         
         guard openNextSlice() else {
             audioEngine = nil
@@ -188,7 +202,7 @@ class AudioEngineManager: NSObject {
         }
         
         let bufferSize: AVAudioFrameCount = 2048
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: pcmFormat) { [weak self] (buffer, time) in
             guard let self = self, self.isRecording, !self.isPaused else { return }
             self.processAudioBuffer(buffer: buffer)
         }
@@ -262,19 +276,32 @@ class AudioEngineManager: NSObject {
             self?.delegate?.onAudioFrame(pcmData: pcmData, amplitude: normalizedAmp, db: db)
         }
         
-        if let handle = currentSliceFileHandle {
-            handle.write(pcmData)
-            currentSlicePcmBytes += Int64(pcmData.count)
-            
-            let bytesPerSecond = Int64(sampleRate * Double(channelCount) * 2.0)
-            let maxBytes = Int64(sliceDurationSeconds * Double(bytesPerSecond))
-            
-            if slicerEnabled && currentSlicePcmBytes >= maxBytes {
-                closeCurrentSlice()
-                if !openNextSlice() {
-                    delegate?.onError(errorMessage: "Failed to create next slice file, recording stopped")
-                    isRecording = false
+        // Persist the frame: AAC/M4A goes through AVAudioFile (converts
+        // float PCM -> AAC), WAV goes through a raw FileHandle.
+        if isM4aOutput {
+            if let audioFile = currentSliceAudioFile {
+                do {
+                    try audioFile.write(from: buffer)
+                } catch {
+                    print("[AudioEngineManager] Error writing m4a: \(error)")
                 }
+            }
+        } else if let handle = currentSliceFileHandle {
+            handle.write(pcmData)
+        }
+        
+        // Track progress using PCM bytes regardless of container so the
+        // time-based rollover threshold works for both formats.
+        currentSlicePcmBytes += Int64(pcmData.count)
+        
+        let bytesPerSecond = Int64(sampleRate * Double(channelCount) * 2.0)
+        let maxBytes = Int64(sliceDurationSeconds * Double(bytesPerSecond))
+        
+        if slicerEnabled && currentSlicePcmBytes >= maxBytes {
+            closeCurrentSlice()
+            if !openNextSlice() {
+                delegate?.onError(errorMessage: "Failed to create next slice file, recording stopped")
+                isRecording = false
             }
         }
     }
@@ -294,42 +321,60 @@ class AudioEngineManager: NSObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let timestamp = formatter.string(from: Date())
-        let ext = isWavOutput ? "wav" : "pcm"
+        let ext = isM4aOutput ? "m4a" : "wav"
         let fileName = "vibe_slice_\(timestamp)_part\(sliceSequence).\(ext)"
         let fileUrl = dir.appendingPathComponent(fileName)
         
-        guard FileManager.default.createFile(atPath: fileUrl.path, contents: nil) else {
-            delegate?.onError(errorMessage: "Failed to create slice file: \(fileUrl.path)")
-            return false
-        }
-        guard let handle = try? FileHandle(forWritingTo: fileUrl) else {
-            delegate?.onError(errorMessage: "Failed to open slice file for writing: \(fileUrl.path)")
-            return false
-        }
-        
-        if isWavOutput {
+        if isM4aOutput {
+            // Create an AVAudioFile that transcodes float PCM -> AAC (m4a).
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: Int(channelCount),
+                AVEncoderBitRateKey: bitRate,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+            do {
+                let audioFile = try AVAudioFile(forWriting: fileUrl, settings: settings)
+                currentSliceAudioFile = audioFile
+            } catch {
+                delegate?.onError(errorMessage: "Failed to create m4a file: \(error.localizedDescription)")
+                return false
+            }
+        } else {
+            guard FileManager.default.createFile(atPath: fileUrl.path, contents: nil) else {
+                delegate?.onError(errorMessage: "Failed to create slice file: \(fileUrl.path)")
+                return false
+            }
+            guard let handle = try? FileHandle(forWritingTo: fileUrl) else {
+                delegate?.onError(errorMessage: "Failed to open slice file for writing: \(fileUrl.path)")
+                return false
+            }
             let emptyHeader = Data(count: 44)
             handle.write(emptyHeader)
+            currentSliceFileHandle = handle
         }
         
         currentSliceFileUrl = fileUrl
-        currentSliceFileHandle = handle
         currentSlicePcmBytes = 0
         currentSliceStartTime = Date()
         return true
     }
     
     private func closeCurrentSlice() {
-        guard let handle = currentSliceFileHandle, let fileUrl = currentSliceFileUrl else { return }
+        guard let fileUrl = currentSliceFileUrl else { return }
         
-        handle.synchronizeFile()
-        handle.closeFile()
-        
-        let actualDurationMs = (currentSlicePcmBytes * 1000) / Int64(sampleRate * Double(channelCount) * 2.0)
-        if isWavOutput {
+        // Close the m4a writer (finalizes the file) or flush the raw handle.
+        if isM4aOutput {
+            currentSliceAudioFile = nil // AVAudioFile finalizes on release
+        } else {
+            currentSliceFileHandle?.synchronizeFile()
+            currentSliceFileHandle?.closeFile()
             writeWavHeader(fileUrl: fileUrl, totalAudioLen: currentSlicePcmBytes, sampleRate: Int(sampleRate), channels: Int(channelCount))
+            currentSliceFileHandle = nil
         }
         
+        let actualDurationMs = (currentSlicePcmBytes * 1000) / Int64(sampleRate * Double(channelCount) * 2.0)
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileUrl.path)[.size] as? Int64) ?? currentSlicePcmBytes
         let isoFormatter = ISO8601DateFormatter()
         let sliceMap: [String: Any] = [
@@ -345,6 +390,7 @@ class AudioEngineManager: NSObject {
         
         sliceSequence += 1
         currentSliceFileHandle = nil
+        currentSliceAudioFile = nil
         currentSliceFileUrl = nil
         
         DispatchQueue.main.async { [weak self] in
@@ -431,6 +477,7 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
             let sampleRate = args["sampleRate"] as? Double ?? 48000.0
             let channelCount = args["channelCount"] as? Int ?? 2
             let format = args["format"] as? String ?? "wav"
+            let bitRate = args["bitRate"] as? Int ?? 128000
             let preferredDeviceId = args["preferredDeviceId"] as? String
             let slicerEnabled = args["slicerEnabled"] as? Bool ?? true
             let sliceDurationMinutes = args["sliceDurationMinutes"] as? Int ?? 5
@@ -440,6 +487,7 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
                 sampleRate: sampleRate,
                 channelCount: channelCount,
                 format: format,
+                bitRate: bitRate,
                 preferredDeviceId: preferredDeviceId,
                 slicerEnabled: slicerEnabled,
                 sliceDurationMinutes: sliceDurationMinutes,

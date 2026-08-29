@@ -157,9 +157,10 @@ class AudioEngineService {
           .invokeMethod<bool>('startRecording', {
         'sampleRate': audioConfig.sampleRate,
         'channelCount': audioConfig.channelCount,
-        // Native capture always records WAV (PCM); other formats are produced
-        // later via export (share/ZIP/copy) from the recordings library.
-        'format': 'wav',
+        // 'wav' (PCM) and 'm4a' (AAC) are natively supported; the encoder
+        // uses the configured bit rate for AAC.
+        'format': audioConfig.format.fileExtension,
+        'bitRate': audioConfig.bitRate,
         'preferredDeviceId': int.tryParse(audioConfig.preferredDeviceId ?? '') ?? (Platform.isIOS ? audioConfig.preferredDeviceId : null),
         'slicerEnabled': slicerConfig.enabled,
         'sliceDurationMinutes': slicerConfig.intervalMinutes,
