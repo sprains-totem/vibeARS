@@ -169,18 +169,6 @@ class AudioEngineService {
       return false;
     }
   }
-        'sliceDurationMinutes': slicerConfig.intervalMinutes,
-        'outputDir': outputDir,
-      });
-
-      _isRecording = result == true;
-      _isPaused = false;
-      return _isRecording;
-    } catch (e) {
-      print('[AudioEngineService] Error starting recording: $e');
-      return false;
-    }
-  }
 
   Future<bool> pauseRecording() async {
     try {
