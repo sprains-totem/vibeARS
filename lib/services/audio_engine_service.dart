@@ -149,6 +149,7 @@ class AudioEngineService {
     required AudioRecordingConfig audioConfig,
     required SlicerConfig slicerConfig,
     String? storagePath,
+    bool uplinkAac = false,
   }) async {
     try {
       final outputDir = await getRecordingsDirectory(customPath: storagePath);
@@ -161,6 +162,7 @@ class AudioEngineService {
         // uses the configured bit rate for AAC.
         'format': audioConfig.format.fileExtension,
         'bitRate': audioConfig.bitRate,
+        'uplinkAac': uplinkAac,
         'preferredDeviceId': int.tryParse(audioConfig.preferredDeviceId ?? '') ?? (Platform.isIOS ? audioConfig.preferredDeviceId : null),
         'slicerEnabled': slicerConfig.enabled,
         'sliceDurationMinutes': slicerConfig.intervalMinutes,

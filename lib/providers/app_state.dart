@@ -99,13 +99,24 @@ class AppState extends ChangeNotifier {
       _waveformHistory.removeAt(0);
       _waveformHistory.add(_currentAmplitude);
 
-      // Dispatch to real-time streaming pipeline if active
+      // Dispatch to real-time streaming pipeline if active. The uplink
+      // carries AAC/ADTS frames when the webSocketAac protocol is selected
+      // (encoding happens natively), otherwise raw PCM bytes.
       if (_streamingConfig.enabled && _streaming.state == StreamingState.connected) {
-        final pcm = data['pcm'];
-        if (pcm is Uint8List) {
-          _streaming.sendAudioChunk(pcm);
-        } else if (pcm is List<int>) {
-          _streaming.sendAudioChunk(Uint8List.fromList(pcm));
+        if (_streamingConfig.protocol == StreamingProtocol.webSocketAac) {
+          final aac = data['aac'];
+          if (aac is Uint8List) {
+            _streaming.sendAudioChunk(aac);
+          } else if (aac is List<int>) {
+            _streaming.sendAudioChunk(Uint8List.fromList(aac));
+          }
+        } else {
+          final pcm = data['pcm'];
+          if (pcm is Uint8List) {
+            _streaming.sendAudioChunk(pcm);
+          } else if (pcm is List<int>) {
+            _streaming.sendAudioChunk(Uint8List.fromList(pcm));
+          }
         }
       }
 
@@ -117,6 +128,9 @@ class AppState extends ChangeNotifier {
       final sliceItem = AudioSliceItem.fromJson(data);
       _uploadQueue.enqueueSlice(sliceItem);
       _storage.refreshFiles();
+      // Dashcam-style loop recording: prune oldest unlocked slices if the
+      // storage quota is exceeded.
+      _storage.pruneForLoopRecording();
       notifyListeners();
     });
 
@@ -178,6 +192,8 @@ class AppState extends ChangeNotifier {
       audioConfig: _audioConfig,
       slicerConfig: _slicerConfig,
       storagePath: storagePath,
+      uplinkAac: _streamingConfig.enabled &&
+          _streamingConfig.protocol == StreamingProtocol.webSocketAac,
     );
 
     if (success) {

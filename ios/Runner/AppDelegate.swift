@@ -98,7 +98,7 @@ class AudioDeviceManager {
 
 // MARK: - Audio Engine Delegate & Manager
 protocol AudioEngineDelegate: AnyObject {
-    func onAudioFrame(pcmData: Data, amplitude: Double, db: Double)
+    func onAudioFrame(pcmData: Data, amplitude: Double, db: Double, aacData: Data?)
     func onSliceCompleted(sliceInfo: [String: Any])
     func onError(errorMessage: String)
 }
@@ -129,6 +129,12 @@ class AudioEngineManager: NSObject {
     private var sliceSequence: Int = 1
     private var sessionId: String = UUID().uuidString
     
+    // Real-time uplink AAC/ADTS encoder (webSocketAac protocol).
+    private var uplinkEnabled = false
+    private var uplinkConverter: AVAudioConverter?
+    private var uplinkCompressedBuffer: AVAudioCompressedBuffer?
+    private var uplinkInputProvided = false
+    
     private override init() {
         super.init()
         NotificationCenter.default.addObserver(
@@ -144,6 +150,7 @@ class AudioEngineManager: NSObject {
         channelCount: Int = 2,
         format: String = "wav",
         bitRate: Int = 128000,
+        uplinkAac: Bool = false,
         preferredDeviceId: String? = nil,
         slicerEnabled: Bool = true,
         sliceDurationMinutes: Int = 5,
@@ -155,6 +162,7 @@ class AudioEngineManager: NSObject {
         self.channelCount = AVAudioChannelCount(channelCount)
         self.formatString = format.lowercased()
         self.bitRate = bitRate
+        self.uplinkEnabled = uplinkAac
         self.slicerEnabled = slicerEnabled
         self.sliceDurationSeconds = Double(sliceDurationMinutes * 60)
         self.outputDirectory = URL(fileURLWithPath: outputDir)
@@ -201,6 +209,10 @@ class AudioEngineManager: NSObject {
             return false
         }
         
+        if uplinkEnabled {
+            setupUplinkAac()
+        }
+        
         let bufferSize: AVAudioFrameCount = 2048
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: pcmFormat) { [weak self] (buffer, time) in
             guard let self = self, self.isRecording, !self.isPaused else { return }
@@ -231,9 +243,90 @@ class AudioEngineManager: NSObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+        uplinkConverter = nil
+        uplinkCompressedBuffer = nil
         
         closeCurrentSlice()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+    
+    // MARK: - Uplink AAC encoding (AVAudioConverter -> ADTS)
+    
+    private func setupUplinkAac() {
+        guard let pcmFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: AVAudioChannelCount(channelCount),
+            interleaved: false
+        ) else { return }
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: Int(channelCount),
+            AVEncoderBitRateKey: bitRate
+        ]
+        guard let converter = AVAudioConverter(from: pcmFormat, to: settings) else {
+            delegate?.onError(errorMessage: "Failed to create uplink AAC converter")
+            return
+        }
+        uplinkConverter = converter
+        uplinkCompressedBuffer = AVAudioCompressedBuffer(
+            format: converter.outputFormat,
+            packetCapacity: 1024,
+            maximumPacketSize: converter.maximumOutputPacketSize
+        )
+        uplinkInputProvided = false
+    }
+    
+    private var uplinkInputProvided = false
+    
+    private func encodeUplinkAac(from input: AVAudioPCMBuffer) -> Data? {
+        guard let converter = uplinkConverter, let output = uplinkCompressedBuffer else { return nil }
+        
+        output.audioBufferList.pointee.mBuffers.mDataByteSize = 0
+        uplinkInputProvided = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, outStatus in
+            if self.uplinkInputProvided {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            self.uplinkInputProvided = true
+            outStatus.pointee = .haveData
+            return input
+        }
+        
+        guard status == .haveData, output.byteLength > 0 else { return nil }
+        
+        // AVAudioConverter emits raw AAC; wrap it in an ADTS header so the
+        // server can decode a continuous stream.
+        let payload = Data(bytes: output.data, count: output.byteLength)
+        var header = Data(count: 7)
+        let frameLength = payload.count + 7
+        let sampleRateIndex = Self.adtsSampleRateIndex(sampleRate)
+        let channelConfig = min(Int(channelCount), 7)
+        header[0] = 0xFF
+        header[1] = 0xF1 // MPEG-4, no CRC
+        header[2] = UInt8(((2 & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01))
+        header[3] = UInt8(((channelConfig & 0x03) << 6) | ((frameLength >> 11) & 0x03))
+        header[4] = UInt8((frameLength >> 3) & 0xFF)
+        header[5] = UInt8(((frameLength & 0x07) << 5) | 0x1F)
+        header[6] = UInt8(0xFC)
+        return header + payload
+    }
+    
+    private static func adtsSampleRateIndex(_ rate: Double) -> Int {
+        switch Int(rate) {
+        case 96000: return 0
+        case 88200: return 1
+        case 64000: return 2
+        case 48000: return 3
+        case 44100: return 4
+        case 32000: return 5
+        case 24000: return 6
+        case 16000: return 8
+        default: return 4 // 44100 fallback
+        }
     }
     
     private func processAudioBuffer(buffer: AVAudioPCMBuffer) {
@@ -272,8 +365,11 @@ class AudioEngineManager: NSObject {
             }
         }
         
+        // Encode an AAC/ADTS frame for the real-time uplink when enabled.
+        let aacData = uplinkEnabled ? encodeUplinkAac(from: buffer) : nil
+        
         DispatchQueue.main.async { [weak self] in
-            self?.delegate?.onAudioFrame(pcmData: pcmData, amplitude: normalizedAmp, db: db)
+            self?.delegate?.onAudioFrame(pcmData: pcmData, amplitude: normalizedAmp, db: db, aacData: aacData)
         }
         
         // Persist the frame: AAC/M4A goes through AVAudioFile (converts
@@ -478,6 +574,7 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
             let channelCount = args["channelCount"] as? Int ?? 2
             let format = args["format"] as? String ?? "wav"
             let bitRate = args["bitRate"] as? Int ?? 128000
+            let uplinkAac = args["uplinkAac"] as? Bool ?? false
             let preferredDeviceId = args["preferredDeviceId"] as? String
             let slicerEnabled = args["slicerEnabled"] as? Bool ?? true
             let sliceDurationMinutes = args["sliceDurationMinutes"] as? Int ?? 5
@@ -488,6 +585,7 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
                 channelCount: channelCount,
                 format: format,
                 bitRate: bitRate,
+                uplinkAac: uplinkAac,
                 preferredDeviceId: preferredDeviceId,
                 slicerEnabled: slicerEnabled,
                 sliceDurationMinutes: sliceDurationMinutes,
@@ -531,13 +629,16 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
         }
     }
     
-    func onAudioFrame(pcmData: Data, amplitude: Double, db: Double) {
-        let flutterData = FlutterStandardTypedData(bytes: pcmData)
-        audioEventSink?([
+    func onAudioFrame(pcmData: Data, amplitude: Double, db: Double, aacData: Data?) {
+        var event: [String: Any] = [
             "amplitude": amplitude,
             "db": db,
-            "pcm": flutterData
-        ])
+            "pcm": FlutterStandardTypedData(bytes: pcmData)
+        ]
+        if let aac = aacData {
+            event["aac"] = FlutterStandardTypedData(bytes: aac)
+        }
+        audioEventSink?(event)
     }
     
     func onSliceCompleted(sliceInfo: [String: Any]) {

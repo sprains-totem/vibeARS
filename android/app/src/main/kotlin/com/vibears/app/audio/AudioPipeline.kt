@@ -25,7 +25,7 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 interface AudioPipelineListener {
-    fun onAudioFrame(pcmData: ByteArray, amplitude: Double, db: Double)
+    fun onAudioFrame(pcmData: ByteArray, amplitude: Double, db: Double, aacData: ByteArray? = null)
     fun onSliceCompleted(sliceInfo: Map<String, Any>)
     fun onError(errorMessage: String)
 }
@@ -40,6 +40,7 @@ class AudioPipeline(
     private val slicerEnabled: Boolean = true,
     private val sliceDurationMs: Long = 5 * 60 * 1000L, // 5 minutes default
     private val outputDir: String,
+    private val uplinkAac: Boolean = false,
     private val listener: AudioPipelineListener
 ) {
     private val TAG = "AudioPipeline"
@@ -72,6 +73,12 @@ class AudioPipeline(
     private var muxerTrackIndex: Int = -1
     private var muxerStarted: Boolean = false
     private var encoderPtsUs: Long = 0L
+
+    // Real-time uplink AAC/ADTS encoder (used when the streaming protocol is
+    // webSocketAac). Emits standalone ADTS frames that the server can decode
+    // as a continuous stream — mirroring how cameras push encoded audio up.
+    private var uplinkCodec: MediaCodec? = null
+    private var uplinkPtsUs: Long = 0L
 
     fun start(): Boolean {
         if (isRecording.get()) return true
@@ -137,6 +144,12 @@ class AudioPipeline(
             isPaused.set(false)
             audioRecord?.startRecording()
 
+            // Start the uplink AAC encoder if requested (ADTS stream output).
+            if (uplinkAac) {
+                uplinkCodec = configureUplinkAacEncoder()
+                uplinkPtsUs = 0L
+            }
+
             // Initialize the first slice file
             if (!openNextSlice()) {
                 isRecording.set(false)
@@ -181,6 +194,15 @@ class AudioPipeline(
             audioRecord = null
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping AudioRecord", e)
+        }
+
+        // Release the uplink encoder.
+        try {
+            uplinkCodec?.stop()
+            uplinkCodec?.release()
+            uplinkCodec = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing uplink codec", e)
         }
 
         // Close and finalize the last slice
@@ -229,9 +251,14 @@ class AudioPipeline(
                 }
                 val pcmBytes = byteBuffer.array()
 
-                // Dispatch PCM frame for real-time streaming & UI visualization
+                // Encode this PCM block into one or more ADTS AAC frames for
+                // the real-time uplink (if enabled).
+                val uplinkFrames = drainUplinkAac(pcmBytes)
+
+                // Dispatch PCM frame (+ optional AAC uplink frames) for
+                // real-time streaming & UI visualization
                 mainHandler.post {
-                    listener.onAudioFrame(pcmBytes, normalizedAmplitude, db)
+                    listener.onAudioFrame(pcmBytes, normalizedAmplitude, db, uplinkFrames)
                 }
 
                 try {
@@ -272,6 +299,65 @@ class AudioPipeline(
     // ------------------------------------------------------------------
     // AAC (M4A) encoding via MediaCodec + MediaMuxer
     // ------------------------------------------------------------------
+
+    /** Uplink encoder with ADTS output for live streaming (no muxer). */
+    private fun configureUplinkAacEncoder(): MediaCodec {
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount)
+        format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 100 * 1024)
+        format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+        // ADTS framing: each output buffer is a self-contained AAC frame with
+        // an ADTS header, which servers can decode as a continuous stream.
+        format.setInteger(MediaFormat.KEY_IS_ADTS, 1)
+
+        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        codec.start()
+        return codec
+    }
+
+    /** Feeds one PCM block into the uplink encoder and drains all available
+     *  ADTS frames, concatenated, or null when nothing is ready yet. */
+    private fun drainUplinkAac(pcmBytes: ByteArray): ByteArray? {
+        val codec = uplinkCodec ?: return null
+
+        val inIndex = codec.dequeueInputBuffer(10_000)
+        if (inIndex >= 0) {
+            val inBuf = codec.getInputBuffer(inIndex) ?: return null
+            inBuf.clear()
+            inBuf.put(pcmBytes)
+            val frames = pcmBytes.size / 2 / channelCount
+            codec.queueInputBuffer(inIndex, 0, pcmBytes.size, uplinkPtsUs, 0)
+            uplinkPtsUs += frames * 1_000_000L / sampleRate
+        }
+
+        // Collect every ready ADTS frame; a single PCM block can yield 1+ AAC
+        // frames (AAC frame = 1024 samples), so drain the output queue fully.
+        val chunks = mutableListOf<ByteArray>()
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            val outIndex = codec.dequeueOutputBuffer(info, 0)
+            if (outIndex < 0) break
+            if (info.size > 0) {
+                val outBuf = codec.getOutputBuffer(outIndex) ?: break
+                val bytes = ByteArray(info.size)
+                outBuf.position(info.offset)
+                outBuf.get(bytes, 0, info.size)
+                chunks.add(bytes)
+            }
+            codec.releaseOutputBuffer(outIndex, false)
+        }
+        if (chunks.isEmpty()) return null
+        val total = chunks.sumOf { it.size }
+        val merged = ByteArray(total)
+        var offset = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, merged, offset, chunk.size)
+            offset += chunk.size
+        }
+        return merged
+    }
 
     private fun configureAacEncoder(): MediaCodec {
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount)

@@ -55,6 +55,7 @@ class AudioCaptureService : Service(), AudioManager.OnAudioFocusChangeListener {
         slicerEnabled: Boolean,
         sliceDurationMs: Long,
         outputDir: String,
+        uplinkAac: Boolean,
         listener: AudioPipelineListener
     ): Boolean {
         val notification = buildForegroundNotification("正在进行不间断后台录音...")
@@ -80,6 +81,7 @@ class AudioCaptureService : Service(), AudioManager.OnAudioFocusChangeListener {
             slicerEnabled = slicerEnabled,
             sliceDurationMs = sliceDurationMs,
             outputDir = outputDir,
+            uplinkAac = uplinkAac,
             listener = listener
         )
         return pipeline?.start() == true

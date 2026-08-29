@@ -574,6 +574,21 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                                 ),
                                 if (!storage.isSelectionMode) ...[
                                   IconButton(
+                                    icon: Icon(
+                                      file.isLocked ? Icons.lock : Icons.lock_open,
+                                      size: 18,
+                                      color: file.isLocked ? VibeTheme.accentAmber : VibeTheme.textSecondary,
+                                    ),
+                                    tooltip: file.isLocked ? '解锁（允许循环覆盖）' : '锁定（防止循环覆盖删除）',
+                                    onPressed: () {
+                                      if (file.isLocked) {
+                                        storage.unlockFile(file.path);
+                                      } else {
+                                        storage.lockFile(file.path);
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
                                     icon: const Icon(Icons.share, size: 18, color: VibeTheme.textSecondary),
                                     tooltip: '分享',
                                     onPressed: () => Share.shareXFiles([XFile(file.path)], text: file.name),

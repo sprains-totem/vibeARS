@@ -110,6 +110,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 val slicerEnabled = call.argument<Boolean>("slicerEnabled") ?: true
                 val sliceDurationMinutes = call.argument<Int>("sliceDurationMinutes") ?: 5
                 val outputDir = call.argument<String>("outputDir") ?: (context?.filesDir?.absolutePath ?: "")
+                val uplinkAac = call.argument<Boolean>("uplinkAac") ?: false
 
                 startServiceAndRecord(
                     sampleRate,
@@ -120,6 +121,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                     slicerEnabled,
                     sliceDurationMinutes * 60 * 1000L,
                     outputDir,
+                    uplinkAac,
                     result
                 )
             }
@@ -173,6 +175,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
         slicerEnabled: Boolean,
         sliceDurationMs: Long,
         outputDir: String,
+        uplinkAac: Boolean,
         result: MethodChannel.Result
     ) {
         val ctx = context ?: run {
@@ -202,16 +205,19 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                     slicerEnabled = slicerEnabled,
                     sliceDurationMs = sliceDurationMs,
                     outputDir = outputDir,
+                    uplinkAac = uplinkAac,
                     listener = object : AudioPipelineListener {
-                        override fun onAudioFrame(pcmData: ByteArray, amplitude: Double, db: Double) {
+                        override fun onAudioFrame(pcmData: ByteArray, amplitude: Double, db: Double, aacData: ByteArray?) {
                             activity?.runOnUiThread {
-                                audioSink?.success(
-                                    mapOf(
-                                        "amplitude" to amplitude,
-                                        "db" to db,
-                                        "pcm" to pcmData
-                                    )
+                                val event = mutableMapOf<String, Any?>(
+                                    "amplitude" to amplitude,
+                                    "db" to db,
+                                    "pcm" to pcmData
                                 )
+                                if (aacData != null) {
+                                    event["aac"] = aacData
+                                }
+                                audioSink?.success(event)
                             }
                         }
 

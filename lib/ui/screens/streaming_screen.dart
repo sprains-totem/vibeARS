@@ -114,8 +114,8 @@ class _StreamingScreenState extends State<StreamingScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    '当前推流基于 WebSocket 二进制帧（Opus 压缩或原始 PCM），低延迟且兼容主流 ASR / 通话后端；'
-                    '如服务端提供 WebRTC 信令端点，可在此基础上扩展（当前客户端不含 WebRTC 通道）。',
+                    '上行推流基于 WebSocket 二进制帧：可选择原始 PCM（最通用，服务器直接解码）或 AAC/ADTS 压缩帧（低带宽，编码在设备端完成）。'
+                    '包含握手鉴权、心跳测延迟与断线自动重连。',
                     style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                   ),
                   const SizedBox(height: 16),

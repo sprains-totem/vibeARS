@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:archive/archive_io.dart';
@@ -35,6 +36,7 @@ class LocalRecordingFile {
   final int sizeBytes;
   final DateTime modifiedAt;
   final String extension;
+  final bool isLocked;
 
   LocalRecordingFile({
     required this.path,
@@ -42,6 +44,7 @@ class LocalRecordingFile {
     required this.sizeBytes,
     required this.modifiedAt,
     required this.extension,
+    this.isLocked = false,
   });
 
   String get formattedSize {
@@ -53,6 +56,43 @@ class LocalRecordingFile {
   /// Raw PCM slices from older builds have no WAV header and cannot be
   /// decoded by the system player.
   bool get isRawPcm => extension.toLowerCase() == 'pcm';
+}
+
+/// Loop-recording settings modelled after dashcam / security-camera
+/// continuous loop recording: when the storage quota is exceeded the oldest
+/// unlocked slices are deleted automatically.
+class LoopRecordingConfig {
+  final bool enabled;
+  final int maxBytes; // 0 = unlimited
+
+  const LoopRecordingConfig({this.enabled = false, this.maxBytes = 0});
+
+  bool get isUnlimited => maxBytes <= 0;
+
+  String get displayQuota {
+    if (isUnlimited) return '不限制';
+    final mb = maxBytes ~/ (1024 * 1024);
+    if (mb >= 1024) return '${(mb / 1024).toStringAsFixed(1)} GB';
+    return '$mb MB';
+  }
+
+  factory LoopRecordingConfig.fromJson(Map<String, dynamic> json) {
+    return LoopRecordingConfig(
+      enabled: json['enabled'] as bool? ?? false,
+      maxBytes: json['maxBytes'] as int? ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'enabled': enabled, 'maxBytes': maxBytes};
+  }
+
+  LoopRecordingConfig copyWith({bool? enabled, int? maxBytes}) {
+    return LoopRecordingConfig(
+      enabled: enabled ?? this.enabled,
+      maxBytes: maxBytes ?? this.maxBytes,
+    );
+  }
 }
 
 class LocalStorageService extends ChangeNotifier {
@@ -76,6 +116,12 @@ class LocalStorageService extends ChangeNotifier {
   String? _lastStoragePathError;
   String? _lastPlayError;
 
+  // Loop recording & locked-slice protection (dashcam-style)
+  LoopRecordingConfig _loopConfig = const LoopRecordingConfig();
+  final Set<String> _lockedPaths = <String>{};
+  int _lastPrunedCount = 0;
+  DateTime? _lastPrunedAt;
+
   // Batch selection
   bool _isSelectionMode = false;
   final Set<String> _selectedPaths = <String>{};
@@ -93,6 +139,11 @@ class LocalStorageService extends ChangeNotifier {
   Map<String, bool> get presetAvailability => Map.unmodifiable(_presetAvailability);
   String? get lastStoragePathError => _lastStoragePathError;
   String? get lastPlayError => _lastPlayError;
+  LoopRecordingConfig get loopConfig => _loopConfig;
+  int get lastPrunedCount => _lastPrunedCount;
+  DateTime? get lastPrunedAt => _lastPrunedAt;
+  Set<String> get lockedPaths => Set.unmodifiable(_lockedPaths);
+  bool isLocked(String path) => _lockedPaths.contains(path);
 
   bool get isSelectionMode => _isSelectionMode;
   Set<String> get selectedPaths => Set.unmodifiable(_selectedPaths);
@@ -123,6 +174,18 @@ class LocalStorageService extends ChangeNotifier {
       orElse: () => PlayMode.sequential,
     );
     _playbackSpeed = sp.getDouble('vibears_playback_speed') ?? 1.0;
+
+    final loopJson = sp.getString('vibears_loop_recording');
+    if (loopJson != null) {
+      try {
+        _loopConfig = LoopRecordingConfig.fromJson(
+          jsonDecode(loopJson) as Map<String, dynamic>,
+        );
+      } catch (_) {}
+    }
+    _lockedPaths
+      ..clear()
+      ..addAll(sp.getStringList('vibears_locked_paths') ?? const []);
 
     _storagePresets = await AudioEngineService.instance.getStoragePresets();
     // Probe writability of each preset once at startup.
@@ -277,6 +340,7 @@ class LocalStorageService extends ChangeNotifier {
               sizeBytes: stat.size,
               modifiedAt: stat.modified,
               extension: ext.replaceAll('.', ''),
+              isLocked: _lockedPaths.contains(entity.path),
             ),
           );
         }
@@ -284,6 +348,78 @@ class LocalStorageService extends ChangeNotifier {
         _collectAudioFiles(entity, out, depth: depth + 1);
       }
     }
+  }
+
+  // --- Loop Recording (dashcam / security-camera style) ---
+
+  Future<void> setLoopConfig(LoopRecordingConfig config) async {
+    _loopConfig = config;
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString('vibears_loop_recording', jsonEncode(config.toJson()));
+    notifyListeners();
+    await pruneForLoopRecording();
+  }
+
+  Future<void> lockFile(String path) async {
+    _lockedPaths.add(path);
+    final sp = await SharedPreferences.getInstance();
+    await sp.setStringList('vibears_locked_paths', _lockedPaths.toList());
+    await refreshFiles();
+  }
+
+  Future<void> unlockFile(String path) async {
+    _lockedPaths.remove(path);
+    final sp = await SharedPreferences.getInstance();
+    await sp.setStringList('vibears_locked_paths', _lockedPaths.toList());
+    await refreshFiles();
+  }
+
+  /// Dashcam-style pruning: when loop recording is enabled and the total
+  /// size of all recordings exceeds the quota, delete the oldest unlocked
+  /// files (skipping the currently playing file) until under the quota.
+  /// Returns the number of files removed.
+  Future<int> pruneForLoopRecording() async {
+    _lastPrunedCount = 0;
+    _lastPrunedAt = null;
+    if (!_loopConfig.enabled || _loopConfig.isUnlimited || _files.isEmpty) {
+      return 0;
+    }
+
+    var total = _files.fold<int>(0, (sum, f) => sum + f.sizeBytes);
+    if (total <= _loopConfig.maxBytes) {
+      return 0;
+    }
+
+    // Oldest first, unlocked only.
+    final candidates = _files.where((f) {
+      if (f.isLocked) return false;
+      if (f.path == _currentlyPlayingPath) return false;
+      return true;
+    }).toList()
+      ..sort((a, b) => a.modifiedAt.compareTo(b.modifiedAt));
+
+    var removed = 0;
+    for (final f in candidates) {
+      if (total <= _loopConfig.maxBytes) break;
+      try {
+        final file = File(f.path);
+        if (await file.exists()) {
+          final size = await file.length();
+          await file.delete();
+          total -= size;
+          removed++;
+        }
+      } catch (e) {
+        print('[LocalStorageService] Loop prune error: $e');
+      }
+    }
+
+    _lastPrunedCount = removed;
+    _lastPrunedAt = DateTime.now();
+    if (removed > 0) {
+      await refreshFiles();
+    }
+    return removed;
   }
 
   // --- Advanced Player Methods ---

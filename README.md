@@ -18,11 +18,12 @@
 ### 2. ⚡ 多路分发架构 (1-In-3-Out Audio Pipelines)
 - **Pipeline 1：实时流式传输 (Live Streaming)**
   - 采用低延迟高品质通话/直播级流式方案。
-  - 支持 **WebSocket (Opus 压缩编码)** 与 **WebSocket (原始 PCM 流)** 两种真实可用协议。
+  - 支持 **WebSocket (AAC/ADTS 压缩帧)** 与 **WebSocket (原始 PCM 流)** 两种真实可用协议，编码在设备端完成（Android MediaCodec / iOS AVAudioConverter）。
   - 支持鉴权 Token、自定义流 ID，内置断网自动重连与端到端延迟、码率遥测监控。
 - **Pipeline 2：无缝分段切片与云端归档 (Segmented Slicer)**
   - 自由设定切片周期（支持 **5 分钟**、1 分钟、10 分钟、30 分钟等）。
   - **样本精确度无缝滚转（Sample-Accurate Rollover）**：在底层 PCM 持续采集中自动分段，实现切口处**零丢帧、零爆音**。
+  - **无限循环录制（Loop Recording，对标行车记录仪/监控摄像头）**：设置存储配额（256MB-5GB 或不限制），达到上限自动覆盖最旧的**未锁定**片段；关键片段可一键**锁定保护**，永不被循环覆盖删除。
   - **自动多远程存储同步**：
     - **WebDAV 网盘**：支持坚果云、Nextcloud、ownCloud、群晖 WebDAV、Alist 等。
     - **S3 / 对象存储**：完整实现 AWS SigV4 认证，兼容 Amazon S3、MinIO、Cloudflare R2、阿里云 OSS、腾讯云 COS、Backblaze B2 等。

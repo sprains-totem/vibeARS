@@ -44,17 +44,27 @@ vibeARS 实现了纯 Dart 版的 **AWS SigV4** 签名算法，无需依赖重量
 
 ## 3. 实时流式传输协议 (Streaming Protocols)
 
-### 3.1 WebSocket 二进制推流
+### 3.1 WebSocket 二进制推流（上行音频处理链路）
+
+上行链路对标监控摄像头/对讲设备的音频上行：**采集 → 编码 → 分帧 → 推送**。
+
 - **协议握手（JSON Handshake）**：
   ```json
   {
     "event": "handshake",
     "streamId": "room_1001_mic_master",
-    "protocol": "webSocketOpus",
+    "protocol": "webSocketAac",
+    "sampleRate": 48000,
+    "channels": 2,
     "timestamp": "2024-01-01T12:00:00.000Z",
     "client": "vibeARS-Mobile"
   }
   ```
+- **上行编码（设备端完成）**：
+  - `webSocketPcm`：直接发送 **16-bit 小端 PCM 原始帧**（零编码开销，服务器可直接解码，最通用）。
+  - `webSocketAac`：设备端（Android MediaCodec / iOS AVAudioConverter）将 PCM 实时编码为 **AAC-LC + ADTS 帧**（每帧 1024 采样，带 ADTS 头，服务器可连续流式解码），带宽约为 PCM 的 1/8-1/15。
+  - 注：平台不提供 Opus 编码器，故不提供 Opus 上行；如需 Opus 需集成 libopus。
 - **音频数据分包（Binary Payload）**：
-  - 握手完成后，后续直接通过 WebSocket 发送二进制 PCM 字节或 Opus 帧包（每包 20ms - 40ms 粒度）。
-  - 支持服务器返回 `{"event": "pong"}` 心跳包用于精确测量端到端往返延迟（RTT）。
+  - 握手完成后，后续直接通过 WebSocket 发送二进制帧（PCM 字节或 AAC/ADTS 帧，每包约 20ms-100ms 粒度）。
+  - 内置 10s 心跳（客户端发 `{"event":"ping"}`，服务器回 `{"event":"pong"}`）精确测量端到端往返延迟（RTT）。
+  - 弱网处理：发送失败计为丢包（`droppedPackets`），断线后按 3s 间隔自动重连；本地录制不受弱网影响（上行与落盘完全解耦）。

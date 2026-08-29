@@ -1,13 +1,13 @@
 enum StreamingProtocol {
-  webSocketOpus,
-  webSocketPcm;
+  webSocketPcm,
+  webSocketAac;
 
   String get displayName {
     switch (this) {
-      case StreamingProtocol.webSocketOpus:
-        return 'WebSocket (Opus 低延迟高压缩编码)';
       case StreamingProtocol.webSocketPcm:
         return 'WebSocket (PCM 原始高保真流)';
+      case StreamingProtocol.webSocketAac:
+        return 'WebSocket (AAC/ADTS 低延迟压缩)';
     }
   }
 }
@@ -47,7 +47,7 @@ class StreamingConfig {
   const StreamingConfig({
     this.enabled = false,
     this.serverUrl = '',
-    this.protocol = StreamingProtocol.webSocketOpus,
+    this.protocol = StreamingProtocol.webSocketPcm,
     this.authToken = '',
     this.streamId = '',
     this.bufferDurationMs = 20,
@@ -60,7 +60,7 @@ class StreamingConfig {
       serverUrl: json['serverUrl'] as String? ?? '',
       protocol: StreamingProtocol.values.firstWhere(
         (e) => e.name == json['protocol'],
-        orElse: () => StreamingProtocol.webSocketOpus,
+        orElse: () => StreamingProtocol.webSocketPcm,
       ),
       authToken: json['authToken'] as String? ?? '',
       streamId: json['streamId'] as String? ?? '',

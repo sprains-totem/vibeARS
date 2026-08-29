@@ -371,6 +371,120 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                 ),
                 const SizedBox(height: 12),
 
+                // Loop Recording Card (dashcam / security-camera style)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              '无限循环录制 (Loop Recording)',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            ),
+                            Switch(
+                              value: storage.loopConfig.enabled,
+                              activeColor: VibeTheme.primaryNeon,
+                              onChanged: (val) {
+                                storage.setLoopConfig(
+                                  storage.loopConfig.copyWith(enabled: val),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        const Text(
+                          '对标行车记录仪 / 监控摄像头：持续分段录制，存储空间达到配额上限时自动覆盖最旧的未锁定片段；锁定的关键片段永不被自动删除。',
+                          style: TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
+                        ),
+                        const Divider(height: 24, color: Color(0xFF2C394B)),
+
+                        const Text('存储配额上限：', style: TextStyle(fontSize: 13)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            const _QuotaChip(label: '不限制', value: 0),
+                            const _QuotaChip(label: '256 MB', value: 256 * 1024 * 1024),
+                            const _QuotaChip(label: '512 MB', value: 512 * 1024 * 1024),
+                            const _QuotaChip(label: '1 GB', value: 1024 * 1024 * 1024),
+                            const _QuotaChip(label: '2 GB', value: 2 * 1024 * 1024 * 1024),
+                            const _QuotaChip(label: '5 GB', value: 5 * 1024 * 1024 * 1024),
+                          ].map((chip) {
+                            final selected = storage.loopConfig.maxBytes == chip.value;
+                            return ChoiceChip(
+                              label: Text(chip.label),
+                              selected: selected,
+                              selectedColor: VibeTheme.primaryNeon,
+                              labelStyle: TextStyle(
+                                color: selected ? Colors.black : Colors.white,
+                                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                                fontSize: 12,
+                              ),
+                              onSelected: (_) {
+                                storage.setLoopConfig(
+                                  storage.loopConfig.copyWith(maxBytes: chip.value),
+                                );
+                              },
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Storage usage summary
+                        FutureBuilder<String>(
+                          future: storage.getActiveStoragePath(),
+                          builder: (context, snapshot) {
+                            final usage = storage.totalDiskUsageBytes;
+                            final quota = storage.loopConfig.maxBytes;
+                            final label = quota > 0
+                                ? '当前录音占用 ${(usage / (1024 * 1024)).toStringAsFixed(1)} MB / 配额 ${storage.loopConfig.displayQuota}'
+                                : '当前录音占用 ${(usage / (1024 * 1024)).toStringAsFixed(1)} MB';
+                            return Row(
+                              children: [
+                                const Icon(Icons.storage, size: 16, color: VibeTheme.primaryNeon),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    label,
+                                    style: const TextStyle(fontSize: 12, color: VibeTheme.textSecondary),
+                                  ),
+                                ),
+                                if (storage.lastPrunedCount > 0)
+                                  Text(
+                                    '已自动清理 ${storage.lastPrunedCount} 个旧片段',
+                                    style: const TextStyle(fontSize: 11, color: VibeTheme.accentAmber),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            final removed = await storage.pruneForLoopRecording();
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(removed > 0 ? '已清理 $removed 个最旧未锁定片段' : '当前无需清理（未超出配额或全部已锁定）'),
+                                  backgroundColor: VibeTheme.successGreen,
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.cleaning_services),
+                          label: const Text('立即清理旧片段'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
                 // Android Permissions Card
                 if (Platform.isAndroid) ...[
                   Card(
@@ -912,4 +1026,11 @@ class _PresetOptionButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _QuotaChip {
+  final String label;
+  final int value;
+
+  const _QuotaChip({required this.label, required this.value});
 }
