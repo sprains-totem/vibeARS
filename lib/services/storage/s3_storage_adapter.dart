@@ -47,23 +47,15 @@ class S3StorageAdapter implements StorageAdapter {
   }
 
   /// AWS SigV4 requires the canonical query string to be URI-encoded and
-  /// sorted by key. Dart's `Uri` keeps raw query, so we normalize here.
-  String _canonicalQuery(String rawQuery) {
-    if (rawQuery.isEmpty) return '';
-    final params = <String, String>{};
-    for (final pair in rawQuery.split('&')) {
-      if (pair.isEmpty) continue;
-      final idx = pair.indexOf('=');
-      if (idx == -1) {
-        params[Uri.encodeComponent(pair)] = '';
-      } else {
-        final k = Uri.encodeComponent(pair.substring(0, idx));
-        final v = Uri.encodeComponent(pair.substring(idx + 1));
-        params[k] = v;
-      }
-    }
+  /// sorted by key. We rebuild it from the (already parsed) decoded parameter
+  /// map so values are encoded exactly once, the way S3 expects.
+  String _canonicalQuery(Uri uri) {
+    if (uri.queryParameters.isEmpty) return '';
+    final params = uri.queryParameters;
     final keys = params.keys.toList()..sort();
-    return keys.map((k) => '$k=${params[k]}').join('&');
+    return keys
+        .map((k) => '${Uri.encodeComponent(k)}=${Uri.encodeComponent(params[k] ?? '')}')
+        .join('&');
   }
 
   Map<String, String> _buildSigV4Headers({
@@ -80,7 +72,7 @@ class S3StorageAdapter implements StorageAdapter {
         : '${uri.host}:${uri.port}';
 
     final canonicalUri = uri.path.isEmpty ? '/' : uri.path;
-    final canonicalQuery = _canonicalQuery(uri.query);
+    final canonicalQuery = _canonicalQuery(uri);
 
     final canonicalHeaders = 'host:$host\nx-amz-content-sha256:$payloadHash\nx-amz-date:$amzDate\n';
     const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';

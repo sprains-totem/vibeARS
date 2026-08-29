@@ -75,11 +75,14 @@ class AudioDeviceManager(private val context: Context) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
             val target = devices.find { it.id == deviceId }
             if (target != null) {
-                val success = audioRecord.setPreferredDevice(target)
-                Log.d(TAG, "setPreferredDevice ($deviceId): $success")
+                // For Bluetooth SCO, the SCO channel must be activated *before*
+                // AudioRecord is created/routed, otherwise the hardware path is
+                // not available for capture.
                 if (target.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                     startBluetoothSco()
                 }
+                val success = audioRecord.setPreferredDevice(target)
+                Log.d(TAG, "setPreferredDevice ($deviceId): $success")
                 return success
             }
         }

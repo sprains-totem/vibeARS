@@ -429,7 +429,11 @@ class LocalStorageService extends ChangeNotifier {
         if (await file.exists()) {
           final bytes = await file.readAsBytes();
           final fileName = p.basename(filePath);
-          archive.addFile(ArchiveFile.bytes(fileName, bytes));
+          // The 3-argument ArchiveFile constructor is deprecated in newer
+          // archive versions but is the only one available across the
+          // resolved version; bytes are in-memory so size is exact.
+          // ignore: deprecated_member_use
+          archive.addFile(ArchiveFile(fileName, bytes.length, bytes));
         }
       }
 

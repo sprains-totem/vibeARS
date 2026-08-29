@@ -99,7 +99,14 @@ class _StreamingScreenState extends State<StreamingScreen> {
                       return ChoiceChip(
                         label: Text(proto.displayName),
                         selected: isSelected,
-                        enabled: !isDisabled,
+                        // ChoiceChip is disabled by passing a null onSelected.
+                        onSelected: isDisabled
+                            ? null
+                            : (selected) {
+                                if (selected) {
+                                  state.updateStreamingConfig(config.copyWith(protocol: proto));
+                                }
+                              },
                         selectedColor: VibeTheme.primaryNeon,
                         labelStyle: TextStyle(
                           color: isSelected
@@ -108,11 +115,6 @@ class _StreamingScreenState extends State<StreamingScreen> {
                           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           fontSize: 12,
                         ),
-                        onSelected: (selected) {
-                          if (selected && !isDisabled) {
-                            state.updateStreamingConfig(config.copyWith(protocol: proto));
-                          }
-                        },
                       );
                     }).toList(),
                   ),
