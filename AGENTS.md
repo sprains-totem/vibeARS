@@ -40,11 +40,9 @@ vibeARS/
 │   ├── Podfile
 │   └── Runner/
 │       ├── Info.plist               # UIBackgroundModes (audio), Microphone descriptions
-│       ├── AppDelegate.swift
-│       └── Audio/
-│           ├── AudioDeviceManager.swift # AVAudioSession input discovery & routing
-│           ├── AudioEngineManager.swift # AVAudioEngine capture, amplitude, 5min slicer
-│           └── VibeAudioPlugin.swift    # Flutter bridge
+│       └── AppDelegate.swift        # Flutter bridge + AudioDeviceManager + AudioEngineManager
+│           (Audio device discovery, AVAudioEngine capture, amplitude, 5min slicer,
+│            and the VibeAudioPlugin MethodChannel/EventChannel are all in AppDelegate.swift)
 ├── lib/
 │   ├── main.dart
 │   ├── core/
