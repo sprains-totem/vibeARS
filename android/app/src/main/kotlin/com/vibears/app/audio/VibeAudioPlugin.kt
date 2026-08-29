@@ -261,6 +261,7 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
 
                         override fun onError(errorMessage: String) {
                             Log.e(TAG, "Pipeline error: $errorMessage")
+                            VibeAudioPlugin.reportNativeLog(TAG, "Pipeline error: $errorMessage")
                         }
                     }
                 ) == true

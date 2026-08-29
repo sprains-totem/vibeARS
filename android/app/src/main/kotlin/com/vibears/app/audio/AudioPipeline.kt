@@ -47,8 +47,10 @@ class AudioPipeline(
     private val isPaused = AtomicBoolean(false)
     private var startupThread: Thread? = null
     private var recordThread: Thread? = null
+    private var dataWatchdogThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val lastFrameTimeMs = AtomicLong(System.currentTimeMillis())
 
     private val audioDeviceManager = AudioDeviceManager(context)
 
@@ -221,7 +223,32 @@ class AudioPipeline(
             recordThread = Thread({ recordLoop(bufferSize) }, "AudioCaptureThread")
             recordThread?.priority = Thread.MAX_PRIORITY
             recordThread?.start()
+
+            // Watchdog: if no audio frames arrive for a few seconds the SCO
+            // channel is likely not delivering data; report it so the in-app
+            // log makes the failure obvious.
+            lastFrameTimeMs.set(System.currentTimeMillis())
+            dataWatchdogThread = Thread({
+                var reported = false
+                while (isRecording.get() && !reported) {
+                    try {
+                        Thread.sleep(1000)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                    if (isRecording.get() && !isPaused.get() &&
+                        System.currentTimeMillis() - lastFrameTimeMs.get() > 3000
+                    ) {
+                        reported = true
+                        nl(TAG, "WATCHDOG: 3 秒无音频帧数据——SCO 通道未建立音频流，文件将为空")
+                        listener.onError("采集无数据：蓝牙 SCO 通道未建立音频流，请确认耳机已连接并处于通话状态后重试")
+                    }
+                }
+            }, "AudioDataWatchdog")
+            dataWatchdogThread?.start()
+
             Log.d(TAG, "Audio recording pipeline started (format=$format, bitRate=$bitRate, sco=$awaitSco)")
+            nl(TAG, "Audio recording pipeline started (format=$format, bitRate=$bitRate, sco=$awaitSco)")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio recording", e)
@@ -254,6 +281,13 @@ class AudioPipeline(
             recordThread?.join(1000)
         } catch (e: Exception) {
             Log.e(TAG, "Error waiting for record thread to stop", e)
+        }
+
+        try {
+            dataWatchdogThread?.join(1000)
+            dataWatchdogThread = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error waiting for data watchdog", e)
         }
 
         try {
@@ -298,8 +332,8 @@ class AudioPipeline(
 
             val readCount = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
             if (readCount > 0) {
+                lastFrameTimeMs.set(System.currentTimeMillis())
                 val frames = readCount / channelCount
-
                 // 1. Calculate Amplitude and Decibel for UI visualizer
                 var sumSquare = 0.0
                 var maxSample = 0
@@ -348,6 +382,7 @@ class AudioPipeline(
                         // 3. Write to the current WAV slice file
                         currentSliceOutputStream?.write(pcmBytes)
                         currentSlicePcmBytesWritten += pcmBytes.size
+                        currentSliceFramesWritten += frames
 
                         // 4. Check if slice duration reached -> Seamless Rollover
                         if (slicerEnabled && currentSlicePcmBytesWritten >= maxBytesPerSlice) {
@@ -363,6 +398,11 @@ class AudioPipeline(
                     listener.onError("Error writing audio slice: ${e.message}")
                     isRecording.set(false)
                 }
+            } else if (readCount < 0) {
+                // AudioRecord.read() error codes (ERROR_DEAD_OBJECT=-6 etc.).
+                nl(TAG, "AudioRecord.read returned error: $readCount")
+                listener.onError("采集出错 (read=$readCount)，录音已停止")
+                isRecording.set(false)
             }
         }
     }
@@ -602,6 +642,39 @@ class AudioPipeline(
         val file = currentSliceFile ?: return
 
         try {
+            // Empty slice protection: if no audio frames were captured, the
+            // container has only headers and is unplayable — delete it instead
+            // of surfacing a broken file in the library.
+            if (currentSliceFramesWritten == 0L) {
+                nl(TAG, "切片无音频数据 (0 帧)，删除空文件 ${file.name}")
+                if (isM4aOutput) {
+                    // Tear down the muxer/codec so the file handle is released.
+                    try {
+                        mediaCodec?.stop()
+                        mediaCodec?.release()
+                    } catch (_: Exception) {}
+                    mediaCodec = null
+                    try {
+                        if (muxerStarted) mediaMuxer?.stop()
+                        mediaMuxer?.release()
+                    } catch (_: Exception) {}
+                    mediaMuxer = null
+                    muxerStarted = false
+                    muxerTrackIndex = -1
+                } else {
+                    try {
+                        currentSliceOutputStream?.flush()
+                        currentSliceOutputStream?.close()
+                    } catch (_: Exception) {}
+                    currentSliceOutputStream = null
+                }
+                try {
+                    if (file.exists()) file.delete()
+                } catch (_: Exception) {}
+                currentSliceFile = null
+                return
+            }
+
             if (isM4aOutput) {
                 finishM4aSlice()
             } else {

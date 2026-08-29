@@ -112,6 +112,16 @@ class AudioDeviceManager(private val context: Context) {
             audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
         } else null
 
+        // CRITICAL: VOICE_COMMUNICATION capture requires the audio mode to be
+        // MODE_IN_COMMUNICATION, otherwise the SCO channel is never established
+        // and startRecording() succeeds but delivers no audio frames at all.
+        try {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            nl(TAG, "audio mode set to MODE_IN_COMMUNICATION")
+        } catch (e: Exception) {
+            nl(TAG, "setMode(MODE_IN_COMMUNICATION) failed: ${e.message}")
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Modern API: synchronous-ish communication device selection.
             return try {
@@ -192,7 +202,9 @@ class AudioDeviceManager(private val context: Context) {
                     audioManager.isBluetoothScoOn = false
                 }
             }
-            nl(TAG, "Bluetooth route stopped")
+            // Restore the normal audio mode after the communication session.
+            audioManager.mode = AudioManager.MODE_NORMAL
+            nl(TAG, "Bluetooth route stopped, mode restored to MODE_NORMAL")
         } catch (e: Exception) {
             nl(TAG, "Error stopping Bluetooth route: ${e.message}")
         }
