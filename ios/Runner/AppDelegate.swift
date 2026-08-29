@@ -306,10 +306,18 @@ class AudioEngineManager: NSObject {
         let frameLength = payload.count + 7
         let sampleRateIndex = Self.adtsSampleRateIndex(sampleRate)
         let channelConfig = min(Int(channelCount), 7)
-        let b2 = UInt8(((2 & 0x03) << 6) | ((sampleRateIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01))
-        let b3 = UInt8(((channelConfig & 0x03) << 6) | ((frameLength >> 11) & 0x03))
-        let b4 = UInt8((frameLength >> 3) & 0xFF)
-        let b5 = UInt8(((frameLength & 0x07) << 5) | 0x1F)
+        
+        let profileBits = UInt8(2 & 0x03)
+        let srIndexBits = UInt8(sampleRateIndex & 0x0F)
+        let chTopBit = UInt8((channelConfig >> 2) & 0x01)
+        let chLowBits = UInt8(channelConfig & 0x03)
+        let frameHi = UInt8((frameLength >> 11) & 0x03)
+        let frameMid = UInt8((frameLength >> 3) & 0xFF)
+        let frameLo = UInt8(frameLength & 0x07)
+        let b2 = UInt8((profileBits << 6) | (srIndexBits << 2) | chTopBit)
+        let b3 = UInt8((chLowBits << 6) | frameHi)
+        let b4 = frameMid
+        let b5 = UInt8((frameLo << 5) | 0x1F)
         header[0] = 0xFF
         header[1] = 0xF1 // MPEG-4, no CRC
         header[2] = b2
