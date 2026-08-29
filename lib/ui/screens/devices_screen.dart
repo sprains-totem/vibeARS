@@ -349,6 +349,13 @@ class DevicesScreen extends StatelessWidget {
                     '原生采集统一为 16-bit PCM 编码；列表为该设备可用的硬件编码格式。',
                     style: TextStyle(fontSize: 10, color: VibeTheme.textSecondary),
                   ),
+                  if (device.type == AudioDeviceType.bluetoothSco) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      '蓝牙耳机 (HFP/SCO) 通话通道受协议限制，仅支持 16 kHz 单声道采集，将自动应用。',
+                      style: TextStyle(fontSize: 10, color: VibeTheme.accentAmber),
+                    ),
+                  ],
                   const SizedBox(height: 20),
 
                   SizedBox(

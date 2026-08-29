@@ -66,11 +66,20 @@ jobs:
           mkdir -p output
           cp build/app/outputs/flutter-apk/app-release.apk output/vibeARS-Android-release.apk
 
+      - name: Build Android Debug APK (Full Logging Diagnostics Build)
+        run: flutter build apk --debug
+
+      - name: Copy & Rename Debug APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-debug.apk output/vibeARS-Android-debug.apk
+
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: vibeARS-Android-APK
-          path: output/vibeARS-Android-release.apk
+          path: |
+            output/vibeARS-Android-release.apk
+            output/vibeARS-Android-debug.apk
           if-no-files-found: error
 
   # ==========================================
@@ -164,17 +173,20 @@ jobs:
             ## vibeARS 生产就绪版本发布 (${{ steps.vars.outputs.TAG_NAME }})
 
             ### 🚀 本次构建产物：
-            - **Android 客户端**: `vibeARS-Android-release.apk` (支持 Android 7.0 - Android 14)
+            - **Android 客户端（正式版）**: `vibeARS-Android-release.apk` (支持 Android 7.0 - Android 14，可覆盖安装)
+            - **Android 客户端（调试版·全量日志）**: `vibeARS-Android-debug.apk` (独立 applicationId `com.vibears.app.debug`，可与正式版共存安装，用于蓝牙/录音问题排查)
             - **iOS 客户端**: `vibeARS-iOS-unsigned.ipa` (支持 iOS 14.0+)
 
             ### 🎙️ 核心功能特性：
             - **不间断后台录音**：Android Foreground Service (Mic) + WakeLock 保活；iOS Background Audio Mode。
-            - **上游麦克风硬件探测与自由切换**：支持探测内置麦克风、蓝牙耳机 (SCO/A2DP)、USB声卡、有线耳机，展示采样率、声道数与拾音模式。
-            - **实时流式传输 (Live Streaming)**：低延迟 WebSocket Opus/PCM 实时推流，支持实时 ASR/通话处理。
-            - **5分钟无缝分段切片与上传**：基于样本计数的无缝滚转（零丢帧、零爆音），自动同步上传至 **WebDAV** 与 **Amazon S3 / MinIO / Cloudflare R2 / 阿里云OSS / 腾讯云COS**。
-            - **丰富本地音频配置**：支持 AAC/M4A、WAV、MP3、Opus 多格式，支持 64k-320kbps 动态码率与 16k-48kHz 采样率选择。
+            - **上游麦克风硬件探测与自由切换**：支持探测内置麦克风、蓝牙耳机 (SCO/A2DP)、USB声卡、有线耳机，展示采样率、声道数、拾音模式，并支持为每个设备选择输出格式（采样率/声道）。
+            - **无限循环录制**：对标行车记录仪/监控摄像头，设置存储配额后自动覆盖最旧未锁定片段，关键片段可锁定保护。
+            - **实时流式传输 (Live Streaming)**：WebSocket 二进制帧上行，支持原始 PCM 或 AAC/ADTS 压缩编码，含心跳测延迟与断线重连。
+            - **5分钟无缝分段切片与上传**：基于样本计数的无缝滚转（零丢帧、零爆音），自动同步上传至 **WebDAV** 与 **S3 兼容存储**。
+            - **本地多格式录制**：原生支持 WAV (PCM) 与 AAC/M4A 录制，码率设置真实生效。
           files: |
             release-assets/vibeARS-Android-release.apk
+            release-assets/vibeARS-Android-debug.apk
             release-assets/vibeARS-iOS-unsigned.ipa
           draft: false
           prerelease: false

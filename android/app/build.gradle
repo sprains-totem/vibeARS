@@ -78,6 +78,13 @@ android {
     }
 
     buildTypes {
+        // Debug variant ships with full logging and a distinct applicationId
+        // so it can be installed ALONGSIDE the release build for diagnostics.
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            signingConfig signingConfigs.debug
+        }
         release {
             if (hasReleaseSigning) {
                 signingConfig signingConfigs.release

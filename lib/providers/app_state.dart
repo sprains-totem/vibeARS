@@ -163,7 +163,17 @@ class AppState extends ChangeNotifier {
 
   Future<void> selectDevice(AudioInputDevice device) async {
     _selectedDevice = device;
-    _audioConfig = _audioConfig.copyWith(preferredDeviceId: device.id);
+    // Bluetooth SCO capture only supports 8/16 kHz mono; force compatible
+    // settings so the recording session can actually start.
+    if (device.type == AudioDeviceType.bluetoothSco) {
+      _audioConfig = _audioConfig.copyWith(
+        preferredDeviceId: device.id,
+        sampleRate: 16000,
+        channelCount: 1,
+      );
+    } else {
+      _audioConfig = _audioConfig.copyWith(preferredDeviceId: device.id);
+    }
     notifyListeners();
     await _savePreferences();
   }
@@ -176,10 +186,14 @@ class AppState extends ChangeNotifier {
     int? channelCount,
   }) async {
     _selectedDevice = device;
+    final isSco = device.type == AudioDeviceType.bluetoothSco;
     _audioConfig = _audioConfig.copyWith(
       preferredDeviceId: device.id,
-      sampleRate: sampleRate ?? _audioConfig.sampleRate,
-      channelCount: channelCount ?? _audioConfig.channelCount,
+      // SCO devices are limited to 8/16 kHz mono by the HFP profile.
+      sampleRate: isSco
+          ? 16000
+          : (sampleRate ?? _audioConfig.sampleRate),
+      channelCount: isSco ? 1 : (channelCount ?? _audioConfig.channelCount),
     );
     notifyListeners();
     await _savePreferences();

@@ -45,6 +45,7 @@ class AudioPipeline(
     private val TAG = "AudioPipeline"
     private val isRecording = AtomicBoolean(false)
     private val isPaused = AtomicBoolean(false)
+    private var startupThread: Thread? = null
     private var recordThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -82,6 +83,27 @@ class AudioPipeline(
     fun start(): Boolean {
         if (isRecording.get()) return true
 
+        val isSco = audioDeviceManager.isScoDevice(preferredDeviceId)
+        Log.d(TAG, "start() isSco=$isSco preferredDeviceId=$preferredDeviceId")
+
+        if (isSco) {
+            // SCO activation is asynchronous (waits for the CONNECTED
+            // broadcast), so run the whole startup on a background thread to
+            // avoid blocking the main thread / ANR.
+            isRecording.set(true)
+            startupThread = Thread({ startCapture(awaitSco = true) }, "AudioStartupThread")
+            startupThread?.priority = Thread.MAX_PRIORITY
+            startupThread?.start()
+            return true
+        }
+        return startCapture(awaitSco = false)
+    }
+
+    private fun startCapture(awaitSco: Boolean): Boolean {
+        if (isRecording.get() && audioRecord != null) return true
+
+        Log.d(TAG, "startCapture(awaitSco=$awaitSco) sampleRate=$sampleRate channels=$channelCount format=$format")
+
         // Validate that the output directory is actually writable before
         // starting the capture loop, otherwise the session would silently
         // produce no files at all.
@@ -89,20 +111,24 @@ class AudioPipeline(
             val dir = File(outputDir)
             if (!dir.exists() && !dir.mkdirs()) {
                 listener.onError("Failed to create output directory: $outputDir")
+                isRecording.set(false)
                 return false
             }
             if (!dir.canWrite()) {
                 listener.onError("Output directory is not writable: $outputDir")
+                isRecording.set(false)
                 return false
             }
             val probe = File(dir, ".vibears_write_probe")
             if (!probe.createNewFile()) {
                 listener.onError("Output directory is not writable: $outputDir")
+                isRecording.set(false)
                 return false
             }
             probe.delete()
         } catch (e: Exception) {
             listener.onError("Output directory is not writable: ${e.message}")
+            isRecording.set(false)
             return false
         }
 
@@ -116,12 +142,18 @@ class AudioPipeline(
         // Bluetooth SCO capture: activate the communication route BEFORE the
         // AudioRecord is created, and use VOICE_COMMUNICATION as the source so
         // the hardware routes the microphone through the HFP/SCO path.
-        audioDeviceManager.prepareDeviceRoute(preferredDeviceId)
+        val routeReady = audioDeviceManager.prepareDeviceRoute(preferredDeviceId)
+        if (awaitSco && !routeReady) {
+            listener.onError("Bluetooth SCO 未在超时内建立连接，请确认耳机已连接并重试")
+            isRecording.set(false)
+            return false
+        }
         val audioSource = audioDeviceManager.resolveAudioSource(preferredDeviceId)
 
         val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding)
         if (minBufferSize <= 0) {
             listener.onError("Sample rate $sampleRate is not supported by this device")
+            isRecording.set(false)
             return false
         }
         val bufferSize = (minBufferSize * 2).coerceAtLeast(sampleRate * channelCount * 2 / 10) // 100ms buffer
@@ -134,9 +166,11 @@ class AudioPipeline(
                 audioEncoding,
                 bufferSize
             )
+            Log.d(TAG, "AudioRecord created: source=$audioSource rate=$sampleRate ch=$channelConfig buf=$bufferSize state=${audioRecord?.state}")
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 listener.onError("AudioRecord failed to initialize")
+                isRecording.set(false)
                 return false
             }
 
@@ -148,6 +182,7 @@ class AudioPipeline(
             isRecording.set(true)
             isPaused.set(false)
             audioRecord?.startRecording()
+            Log.d(TAG, "AudioRecord.startRecording() OK")
 
             // Start the uplink AAC encoder if requested (ADTS stream output).
             if (uplinkAac) {
@@ -165,7 +200,7 @@ class AudioPipeline(
             recordThread = Thread({ recordLoop(bufferSize) }, "AudioCaptureThread")
             recordThread?.priority = Thread.MAX_PRIORITY
             recordThread?.start()
-            Log.d(TAG, "Audio recording pipeline started (format=$format, bitRate=$bitRate)")
+            Log.d(TAG, "Audio recording pipeline started (format=$format, bitRate=$bitRate, sco=$awaitSco)")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio recording", e)
@@ -186,6 +221,13 @@ class AudioPipeline(
     fun stop() {
         if (!isRecording.get()) return
         isRecording.set(false)
+
+        try {
+            startupThread?.join(5000)
+            startupThread = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error waiting for startup thread", e)
+        }
 
         try {
             recordThread?.join(1000)

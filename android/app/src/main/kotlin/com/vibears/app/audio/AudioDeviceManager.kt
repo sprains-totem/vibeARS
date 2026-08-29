@@ -1,12 +1,17 @@
 package com.vibears.app.audio
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class AudioDeviceManager(private val context: Context) {
     private val TAG = "AudioDeviceManager"
@@ -17,6 +22,7 @@ class AudioDeviceManager(private val context: Context) {
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            Log.d(TAG, "Enumerating input devices: ${devices.size} found")
             for (device in devices) {
                 val deviceMap = mutableMapOf<String, Any>()
                 deviceMap["id"] = device.id.toString()
@@ -50,11 +56,16 @@ class AudioDeviceManager(private val context: Context) {
                     listOf("PCM_16BIT")
                 }
                 deviceMap["encodings"] = encodings
+
+                Log.d(
+                    TAG,
+                    "Device #${device.id}: type=${getDeviceTypeName(device.type)} name=${deviceMap["name"]} " +
+                        "rates=$sampleRates channels=$channelCounts enc=$encodings"
+                )
                 
                 result.add(deviceMap)
             }
         } else {
-            // Fallback for older APIs
             result.add(
                 mapOf(
                     "id" to "0",
@@ -74,32 +85,84 @@ class AudioDeviceManager(private val context: Context) {
         if (deviceId == null) return false
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
         val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
-        return target?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        val isSco = target?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        Log.d(TAG, "isScoDevice($deviceId) = $isSco (target=$target)")
+        return isSco
     }
 
     /**
      * Activates the Bluetooth SCO/communication route BEFORE an AudioRecord is
-     * created. On Android 11+ this uses the modern setCommunicationDevice
-     * API; older versions use the legacy startBluetoothSco(). Without this the
-     * SCO hardware path is not available for capture.
+     * created and waits for the SCO channel to actually connect. SCO
+     * activation is asynchronous: startBluetoothSco() returns immediately and
+     * the hardware path becomes available only after the
+     * ACTION_SCO_AUDIO_STATE_UPDATED broadcast reports CONNECTED. On Android
+     * 11+ the modern setCommunicationDevice API is used instead.
+     *
+     * @return true when the SCO route is ready (or no SCO device was selected).
      */
-    fun prepareDeviceRoute(deviceId: Int?) {
-        if (!isScoDevice(deviceId)) return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
-                if (target != null) {
-                    audioManager.setCommunicationDevice(target)
-                    Log.d(TAG, "setCommunicationDevice (SCO): $deviceId")
+    fun prepareDeviceRoute(deviceId: Int?): Boolean {
+        if (!isScoDevice(deviceId)) return true
+        val target = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
+        } else null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Modern API: synchronous-ish communication device selection.
+            return try {
+                audioManager.setCommunicationDevice(target)
+                Log.d(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
+                // Give the framework a moment to route before AudioRecord init.
+                Thread.sleep(300)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "setCommunicationDevice failed: ${e.message}")
+                false
+            }
+        }
+
+        // Legacy path: startBluetoothSco + wait for the CONNECTED broadcast.
+        val latch = CountDownLatch(1)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED) {
+                    val state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+                    Log.d(TAG, "SCO_AUDIO_STATE_UPDATED state=$state (0=disconnected,1=connecting,2=connected)")
+                    if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
+                        latch.countDown()
+                    }
                 }
+            }
+        }
+        val filter = IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
-                audioManager.startBluetoothSco()
-                audioManager.isBluetoothScoOn = true
-                Log.d(TAG, "startBluetoothSco (legacy)")
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(receiver, filter)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error preparing Bluetooth route: ${e.message}")
+            Log.e(TAG, "Failed to register SCO receiver: ${e.message}")
         }
+
+        try {
+            audioManager.startBluetoothSco()
+            Log.d(TAG, "startBluetoothSco() called, waiting for CONNECTED...")
+        } catch (e: Exception) {
+            Log.e(TAG, "startBluetoothSco failed: ${e.message}")
+        }
+
+        val connected = try {
+            latch.await(4, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Log.e(TAG, "Interrupted while waiting for SCO: ${e.message}")
+            false
+        }
+        try {
+            context.unregisterReceiver(receiver)
+        } catch (_: Exception) {}
+        Log.d(TAG, "SCO route ready: $connected")
+        return connected
     }
 
     fun stopBluetoothRoute() {
@@ -123,11 +186,13 @@ class AudioDeviceManager(private val context: Context) {
      * hardware routes the microphone through the HFP/SCO path.
      */
     fun resolveAudioSource(deviceId: Int?): Int {
-        return if (isScoDevice(deviceId)) {
+        val source = if (isScoDevice(deviceId)) {
             MediaRecorder.AudioSource.VOICE_COMMUNICATION
         } else {
             MediaRecorder.AudioSource.MIC
         }
+        Log.d(TAG, "resolveAudioSource($deviceId) = $source")
+        return source
     }
 
     fun applyPreferredDevice(audioRecord: AudioRecord, deviceId: Int?): Boolean {
@@ -136,7 +201,7 @@ class AudioDeviceManager(private val context: Context) {
             val target = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
             if (target != null) {
                 val success = audioRecord.setPreferredDevice(target)
-                Log.d(TAG, "setPreferredDevice ($deviceId): $success")
+                Log.d(TAG, "setPreferredDevice ($deviceId) -> $success")
                 return success
             }
         }
