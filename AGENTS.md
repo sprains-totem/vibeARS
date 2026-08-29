@@ -8,7 +8,7 @@ Core capabilities:
 3. **Multi-Channel Fan-Out Pipeline**:
    - Real-time Low-Latency Streaming (WebSocket Opus/PCM, WebRTC).
    - 5-Minute Seamless Slicer (Sample-accurate rollover without frame loss/glitches).
-   - Local Multi-Format Storage (AAC/M4A, WAV, MP3, Opus; 64k-320kbps).
+   - Local WAV (PCM) Archiver with a full-featured player & batch exporter (share/ZIP/copy).
 4. **Multi-Cloud Remote Slicing Storage**:
    - WebDAV (RFC 4918).
    - S3-compatible object storage (AWS SigV4).
@@ -103,6 +103,14 @@ vibeARS/
    - Batch exporter supports multi-selection, system Share Sheet, ZIP packaging and exporting, target directory copy, and bulk deletion.
 5. **AWS SigV4 Client**:
    - The custom S3 client avoids heavy external dependencies and supports custom endpoints, path-style and virtual-hosted-style URLs out of the box.
+   - The canonical query string is rebuilt from the decoded parameter map and encoded exactly once, and `listRemoteFiles` uses a proper ListObjectsV2 URL.
 6. **CI/CD Build Rules**:
    - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.
-   - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.
+   - The workflow runs `flutter create --no-overwrite` so README/docs and hand-written platform files are never clobbered.
+7. **Known Implementation Constraints (verified by CI)**:
+   - Native capture (AudioRecord / AVAudioEngine) outputs raw PCM; everything is stored as **WAV** so files are always playable. AAC/MP3/Opus encoding is not implemented in native code yet — do not advertise it as native recording formats; exporting happens via share/ZIP/copy from the recordings library.
+   - `ChoiceChip` has no `enabled` parameter — disable via a null `onSelected`.
+   - The resolved `archive` version only supports the 3-argument `ArchiveFile(name, size, bytes)` constructor.
+   - `double.clamp()` returns `num` — always append `.toDouble()` before assigning to `double` fields or widget `height`/`value` parameters.
+   - Dart `List.filled()` is fixed-length: use `growable: true` before calling `removeAt`.
+   - Recording start must surface real failure: native `startRecording` returns success/failure, and the writable-directory probe runs before capture starts.
