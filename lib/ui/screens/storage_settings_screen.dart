@@ -488,9 +488,9 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                                     }
                                   : (_) {
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
+                                        SnackBar(
                                           content: Text('${fmt.displayName} 编码需集成第三方编码库（LAME/libopus）；当前原生支持 WAV 与 AAC/M4A，其他格式可在录音库通过分享 / ZIP 打包导出转换。'),
-                                          duration: Duration(seconds: 4),
+                                          duration: const Duration(seconds: 4),
                                         ),
                                       );
                                     },
