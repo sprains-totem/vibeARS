@@ -109,6 +109,10 @@ class AudioDeviceManager(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Modern API: synchronous-ish communication device selection.
             return try {
+                if (target == null) {
+                    Log.e(TAG, "SCO device $deviceId no longer present")
+                    return false
+                }
                 audioManager.setCommunicationDevice(target)
                 Log.d(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
                 // Give the framework a moment to route before AudioRecord init.
