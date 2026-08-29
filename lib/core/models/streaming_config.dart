@@ -1,7 +1,6 @@
 enum StreamingProtocol {
   webSocketOpus,
-  webSocketPcm,
-  webrtcAudio;
+  webSocketPcm;
 
   String get displayName {
     switch (this) {
@@ -9,8 +8,6 @@ enum StreamingProtocol {
         return 'WebSocket (Opus 低延迟高压缩编码)';
       case StreamingProtocol.webSocketPcm:
         return 'WebSocket (PCM 原始高保真流)';
-      case StreamingProtocol.webrtcAudio:
-        return 'WebRTC (超低延迟双向通话/直播)';
     }
   }
 }
@@ -40,7 +37,7 @@ enum StreamingState {
 
 class StreamingConfig {
   final bool enabled;
-  final String serverUrl; // wss://your-server.com/audio/stream or webrtc://...
+  final String serverUrl; // wss://your-server.com/audio/stream
   final StreamingProtocol protocol;
   final String authToken;
   final String streamId;

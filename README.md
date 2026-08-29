@@ -18,7 +18,7 @@
 ### 2. ⚡ 多路分发架构 (1-In-3-Out Audio Pipelines)
 - **Pipeline 1：实时流式传输 (Live Streaming)**
   - 采用低延迟高品质通话/直播级流式方案。
-  - 支持 **WebSocket (Opus 压缩编码)**、**WebSocket (原始 PCM 流)** 及 **WebRTC 架构**。
+  - 支持 **WebSocket (Opus 压缩编码)** 与 **WebSocket (原始 PCM 流)** 两种真实可用协议。
   - 支持鉴权 Token、自定义流 ID，内置断网自动重连与端到端延迟、码率遥测监控。
 - **Pipeline 2：无缝分段切片与云端归档 (Segmented Slicer)**
   - 自由设定切片周期（支持 **5 分钟**、1 分钟、10 分钟、30 分钟等）。

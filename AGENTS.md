@@ -6,7 +6,7 @@ Core capabilities:
 1. **Uninterrupted Background Audio Recording**: Foreground service with microphone permission on Android; background audio mode on iOS.
 2. **Upstream Hardware Mic Discovery & Routing**: Real-time enumeration of audio input devices (built-in, bluetooth SCO/A2DP, USB audio interfaces, wired headsets) with capability breakdown (sample rates, channels, encodings, polar patterns) and runtime dynamic switching.
 3. **Multi-Channel Fan-Out Pipeline**:
-   - Real-time Low-Latency Streaming (WebSocket Opus/PCM, WebRTC).
+   - Real-time Low-Latency Streaming over WebSocket binary frames (Opus-compressed or raw PCM). WebRTC is NOT implemented — do not advertise it; a WebRTC channel would require a signaling server and is left as a possible extension.
    - 5-Minute Seamless Slicer (Sample-accurate rollover without frame loss/glitches).
    - Local Archiver supporting native **WAV** and **AAC/M4A** recording with a full-featured player & batch exporter (share/ZIP/copy).
 4. **Multi-Cloud Remote Slicing Storage**:
@@ -51,7 +51,7 @@ vibeARS/
 │   │       ├── audio_device.dart    # Hardware device & capability models
 │   │       ├── slicer_config.dart   # Slicer interval, slice items, status
 │   │       ├── storage_config.dart  # WebDAV & S3 configuration models
-│   │       └── streaming_config.dart# WebSocket / WebRTC streaming models
+│   │       └── streaming_config.dart# WebSocket streaming models
 │   ├── providers/
 │   │   └── app_state.dart           # Master reactive coordinator & state provider
 │   ├── services/

@@ -95,23 +95,17 @@ class _StreamingScreenState extends State<StreamingScreen> {
                     runSpacing: 8,
                     children: StreamingProtocol.values.map((proto) {
                       final isSelected = config.protocol == proto;
-                      final isDisabled = proto == StreamingProtocol.webrtcAudio;
                       return ChoiceChip(
                         label: Text(proto.displayName),
                         selected: isSelected,
-                        // ChoiceChip is disabled by passing a null onSelected.
-                        onSelected: isDisabled
-                            ? null
-                            : (selected) {
-                                if (selected) {
-                                  state.updateStreamingConfig(config.copyWith(protocol: proto));
-                                }
-                              },
+                        onSelected: (selected) {
+                          if (selected) {
+                            state.updateStreamingConfig(config.copyWith(protocol: proto));
+                          }
+                        },
                         selectedColor: VibeTheme.primaryNeon,
                         labelStyle: TextStyle(
-                          color: isSelected
-                              ? Colors.black
-                              : (isDisabled ? Colors.grey : Colors.white),
+                          color: isSelected ? Colors.black : Colors.white,
                           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           fontSize: 12,
                         ),
@@ -120,7 +114,8 @@ class _StreamingScreenState extends State<StreamingScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'WebRTC 通道即将支持（当前实时推流基于 WebSocket 二进制帧，低延迟且兼容主流 ASR / 通话后端）。',
+                    '当前推流基于 WebSocket 二进制帧（Opus 压缩或原始 PCM），低延迟且兼容主流 ASR / 通话后端；'
+                    '如服务端提供 WebRTC 信令端点，可在此基础上扩展（当前客户端不含 WebRTC 通道）。',
                     style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                   ),
                   const SizedBox(height: 16),
@@ -128,7 +123,7 @@ class _StreamingScreenState extends State<StreamingScreen> {
                   TextField(
                     controller: _urlController,
                     decoration: const InputDecoration(
-                      labelText: '推流服务器 WebSocket / WebRTC URL',
+                      labelText: '推流服务器 WebSocket URL',
                       hintText: 'wss://your-asr-server.com/audio/live',
                       prefixIcon: Icon(Icons.link),
                     ),
