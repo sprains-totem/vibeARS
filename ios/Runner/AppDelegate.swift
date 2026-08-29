@@ -27,6 +27,12 @@ class AudioDeviceManager {
         let session = AVAudioSession.sharedInstance()
         var result: [[String: Any]] = []
         
+        // Make sure the audio session is active so `availableInputs` is populated.
+        if session.availableInputs == nil {
+            try? session.setCategory(.playAndRecord, mode: .measurement, options: [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay])
+            try? session.setActive(true)
+        }
+        
         guard let inputs = session.availableInputs else {
             return result
         }
@@ -111,6 +117,8 @@ class AudioEngineManager: NSObject {
     private var slicerEnabled: Bool = true
     private var sliceDurationSeconds: Double = 300.0
     private var outputDirectory: URL?
+    // Native capture emits PCM; everything is stored as WAV so files are playable.
+    private var isWavOutput: Bool { formatString == "wav" || formatString == "pcm" }
     
     private var currentSliceFileUrl: URL?
     private var currentSliceFileHandle: FileHandle?
@@ -137,8 +145,8 @@ class AudioEngineManager: NSObject {
         slicerEnabled: Bool = true,
         sliceDurationMinutes: Int = 5,
         outputDir: String
-    ) {
-        if isRecording { return }
+    ) -> Bool {
+        if isRecording { return true }
         
         self.sampleRate = sampleRate
         self.channelCount = AVAudioChannelCount(channelCount)
@@ -164,16 +172,19 @@ class AudioEngineManager: NSObject {
             }
         } catch {
             delegate?.onError(errorMessage: "Failed to configure AVAudioSession: \(error.localizedDescription)")
-            return
+            return false
         }
         
         audioEngine = AVAudioEngine()
-        guard let engine = audioEngine else { return }
+        guard let engine = audioEngine else { return false }
         
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
         
-        openNextSlice()
+        guard openNextSlice() else {
+            audioEngine = nil
+            return false
+        }
         
         let bufferSize: AVAudioFrameCount = 2048
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] (buffer, time) in
@@ -185,8 +196,13 @@ class AudioEngineManager: NSObject {
             try engine.start()
             isRecording = true
             isPaused = false
+            return true
         } catch {
+            // Clean up the slice file that was opened before engine start.
+            closeCurrentSlice()
+            audioEngine = nil
             delegate?.onError(errorMessage: "Failed to start AVAudioEngine: \(error.localizedDescription)")
+            return false
         }
     }
     
@@ -194,7 +210,7 @@ class AudioEngineManager: NSObject {
     func resumeRecording() { isPaused = false }
     
     func stopRecording() {
-        guard isRecording else { return }
+        guard audioEngine != nil || isRecording else { return }
         isRecording = false
         
         audioEngine?.inputNode.removeTap(onBus: 0)
@@ -254,26 +270,43 @@ class AudioEngineManager: NSObject {
             
             if slicerEnabled && currentSlicePcmBytes >= maxBytes {
                 closeCurrentSlice()
-                openNextSlice()
+                if !openNextSlice() {
+                    delegate?.onError(errorMessage: "Failed to create next slice file, recording stopped")
+                    isRecording = false
+                }
             }
         }
     }
     
-    private func openNextSlice() {
-        guard let dir = outputDirectory else { return }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    private func openNextSlice() -> Bool {
+        guard let dir = outputDirectory else {
+            delegate?.onError(errorMessage: "Output directory is not configured")
+            return false
+        }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            delegate?.onError(errorMessage: "Failed to create output directory: \(error.localizedDescription)")
+            return false
+        }
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let timestamp = formatter.string(from: Date())
-        let ext = (formatString == "wav") ? "wav" : "pcm"
+        let ext = isWavOutput ? "wav" : "pcm"
         let fileName = "vibe_slice_\(timestamp)_part\(sliceSequence).\(ext)"
         let fileUrl = dir.appendingPathComponent(fileName)
         
-        FileManager.default.createFile(atPath: fileUrl.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: fileUrl) else { return }
+        guard FileManager.default.createFile(atPath: fileUrl.path, contents: nil) else {
+            delegate?.onError(errorMessage: "Failed to create slice file: \(fileUrl.path)")
+            return false
+        }
+        guard let handle = try? FileHandle(forWritingTo: fileUrl) else {
+            delegate?.onError(errorMessage: "Failed to open slice file for writing: \(fileUrl.path)")
+            return false
+        }
         
-        if formatString == "wav" {
+        if isWavOutput {
             let emptyHeader = Data(count: 44)
             handle.write(emptyHeader)
         }
@@ -282,6 +315,7 @@ class AudioEngineManager: NSObject {
         currentSliceFileHandle = handle
         currentSlicePcmBytes = 0
         currentSliceStartTime = Date()
+        return true
     }
     
     private func closeCurrentSlice() {
@@ -291,7 +325,7 @@ class AudioEngineManager: NSObject {
         handle.closeFile()
         
         let actualDurationMs = (currentSlicePcmBytes * 1000) / Int64(sampleRate * Double(channelCount) * 2.0)
-        if formatString == "wav" {
+        if isWavOutput {
             writeWavHeader(fileUrl: fileUrl, totalAudioLen: currentSlicePcmBytes, sampleRate: Int(sampleRate), channels: Int(channelCount))
         }
         
@@ -401,7 +435,7 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
             let sliceDurationMinutes = args["sliceDurationMinutes"] as? Int ?? 5
             let outputDir = args["outputDir"] as? String ?? (NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? "")
             
-            AudioEngineManager.shared.startRecording(
+            let started = AudioEngineManager.shared.startRecording(
                 sampleRate: sampleRate,
                 channelCount: channelCount,
                 format: format,
@@ -410,7 +444,11 @@ public class VibeAudioPlugin: NSObject, FlutterPlugin, AudioEngineDelegate {
                 sliceDurationMinutes: sliceDurationMinutes,
                 outputDir: outputDir
             )
-            result(true)
+            if started {
+                result(true)
+            } else {
+                result(FlutterError(code: "RECORD_START_FAILED", message: "Failed to start audio recording", details: nil))
+            }
         case "pauseRecording":
             AudioEngineManager.shared.pauseRecording()
             result(true)

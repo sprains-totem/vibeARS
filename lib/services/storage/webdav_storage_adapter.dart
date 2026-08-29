@@ -27,11 +27,17 @@ class WebDavStorageAdapter implements StorageAdapter {
     if (!p.startsWith('/')) {
       p = '/$p';
     }
-    return '$b$p';
+    // URL-encode each path segment while keeping '/' separators intact.
+    final encoded = p.split('/').map((seg) {
+      if (seg.isEmpty) return seg;
+      return Uri.encodeComponent(seg);
+    }).join('/');
+    return '$b$encoded';
   }
 
   @override
   Future<bool> testConnection() async {
+    final client = http.Client();
     try {
       final url = Uri.parse(_normalizeUrl(config.serverUrl, config.remoteDir));
       final request = http.Request('PROPFIND', url);
@@ -39,7 +45,6 @@ class WebDavStorageAdapter implements StorageAdapter {
       request.headers['Depth'] = '0';
       request.headers['Content-Type'] = 'application/xml; charset=utf-8';
 
-      final client = http.Client();
       final response = await client.send(request).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 207 || response.statusCode == 200) {
@@ -60,23 +65,26 @@ class WebDavStorageAdapter implements StorageAdapter {
     } catch (e) {
       print('[WebDAV] Connection test failed: $e');
       return false;
+    } finally {
+      client.close();
     }
   }
 
   Future<bool> _ensureDirectoryExists(String dirPath) async {
     final parts = dirPath.split('/').where((p) => p.isNotEmpty).toList();
     var currentPath = '';
+    final client = http.Client();
 
-    for (final part in parts) {
-      currentPath += '/$part';
-      final url = Uri.parse(_normalizeUrl(config.serverUrl, currentPath));
+    try {
+      for (final part in parts) {
+        currentPath += '/$part';
+        final url = Uri.parse(_normalizeUrl(config.serverUrl, currentPath));
 
-      try {
         // Check if directory exists
         final checkReq = http.Request('PROPFIND', url);
         checkReq.headers['Authorization'] = _authHeader;
         checkReq.headers['Depth'] = '0';
-        final checkRes = await http.Client().send(checkReq).timeout(const Duration(seconds: 5));
+        final checkRes = await client.send(checkReq).timeout(const Duration(seconds: 5));
 
         if (checkRes.statusCode == 200 || checkRes.statusCode == 207) {
           continue;
@@ -85,14 +93,16 @@ class WebDavStorageAdapter implements StorageAdapter {
         // Create directory with MKCOL
         final mkcolReq = http.Request('MKCOL', url);
         mkcolReq.headers['Authorization'] = _authHeader;
-        final mkcolRes = await http.Client().send(mkcolReq).timeout(const Duration(seconds: 8));
+        final mkcolRes = await client.send(mkcolReq).timeout(const Duration(seconds: 8));
 
         if (mkcolRes.statusCode != 201 && mkcolRes.statusCode != 405) {
           print('[WebDAV] Failed to create folder: $currentPath, status: ${mkcolRes.statusCode}');
         }
-      } catch (e) {
-        print('[WebDAV] Error ensuring directory $currentPath: $e');
       }
+    } catch (e) {
+      print('[WebDAV] Error ensuring directory: $e');
+    } finally {
+      client.close();
     }
     return true;
   }
@@ -138,18 +148,22 @@ class WebDavStorageAdapter implements StorageAdapter {
       }, cancelOnError: true);
 
       final client = http.Client();
-      final response = await client.send(request).timeout(const Duration(minutes: 5));
-      await streamSubscription.asFuture();
+      try {
+        final response = await client.send(request).timeout(const Duration(minutes: 5));
+        await streamSubscription.asFuture();
 
-      final success = response.statusCode == 201 || response.statusCode == 200 || response.statusCode == 204;
-      if (success) {
-        print('[WebDAV] Upload succeeded: $fullRemotePath');
-        onProgress?.call(1.0);
-        return true;
-      } else {
-        final body = await response.stream.bytesToString();
-        print('[WebDAV] Upload failed with status ${response.statusCode}: $body');
-        return false;
+        final success = response.statusCode == 201 || response.statusCode == 200 || response.statusCode == 204;
+        if (success) {
+          print('[WebDAV] Upload succeeded: $fullRemotePath');
+          onProgress?.call(1.0);
+          return true;
+        } else {
+          final body = await response.stream.bytesToString();
+          print('[WebDAV] Upload failed with status ${response.statusCode}: $body');
+          return false;
+        }
+      } finally {
+        client.close();
       }
     } catch (e) {
       print('[WebDAV] Upload exception: $e');
@@ -159,13 +173,14 @@ class WebDavStorageAdapter implements StorageAdapter {
 
   @override
   Future<List<String>> listRemoteFiles(String remoteDir) async {
+    final client = http.Client();
     try {
       final url = Uri.parse(_normalizeUrl(config.serverUrl, remoteDir));
       final request = http.Request('PROPFIND', url);
       request.headers['Authorization'] = _authHeader;
       request.headers['Depth'] = '1';
 
-      final response = await http.Client().send(request);
+      final response = await client.send(request);
       if (response.statusCode == 207) {
         final body = await response.stream.bytesToString();
         // Extract hrefs from XML
@@ -177,6 +192,8 @@ class WebDavStorageAdapter implements StorageAdapter {
     } catch (e) {
       print('[WebDAV] Error listing files: $e');
       return [];
+    } finally {
+      client.close();
     }
   }
 }

@@ -292,12 +292,14 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           onPressed: () async {
                             final custom = _localPathController.text.trim();
                             if (custom.isNotEmpty) {
-                              await storage.setStoragePath(custom);
+                              final ok = await storage.setStoragePath(custom);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('已保存并切换至: $custom'),
-                                    backgroundColor: VibeTheme.successGreen,
+                                    content: Text(
+                                      ok ? '已保存并切换至: $custom' : '路径不可写，未能应用: $custom',
+                                    ),
+                                    backgroundColor: ok ? VibeTheme.successGreen : VibeTheme.errorRed,
                                   ),
                                 );
                               }
@@ -382,6 +384,28 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           '常用录音格式与编码选择',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: VibeTheme.accentAmber.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: VibeTheme.accentAmber.withOpacity(0.4)),
+                          ),
+                          child: const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.info_outline, size: 16, color: VibeTheme.accentAmber),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '当前原生采集引擎输出标准 WAV (PCM 无损)，录音后可通过“录音库”内的一键分享 / ZIP 打包随时转换导出为其他格式。',
+                                  style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                         const SizedBox(height: 12),
 
                         Wrap(
@@ -464,7 +488,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                         const SizedBox(height: 16),
 
                         // Bitrate Selector
-                        const Text('压缩码率 (Bitrate)：', style: TextStyle(fontSize: 14)),
+                        const Text('采样位深与码率 (Bitrate)：', style: TextStyle(fontSize: 14)),
                         const SizedBox(height: 8),
                         Wrap(
                           spacing: 8,
@@ -486,6 +510,11 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               },
                             );
                           }).toList(),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'WAV 为无损 PCM 编码，实际码率 = 采样率 × 声道数 × 16bit（如 48kHz 双声道约 1536 kbps）；码率选项预留给后续有损编码（AAC/MP3）使用。',
+                          style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                         ),
                         const Divider(height: 24, color: Color(0xFF2C394B)),
 
@@ -511,6 +540,11 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               onChanged: (val) => state.updateAudioConfig(audioConfig.copyWith(enableAgc: val)),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          '降噪 (NS) 与自动增益 (AGC) 开关为系统级音频前处理预留接口，将在后续原生音频引擎版本中生效。',
+                          style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                         ),
                       ],
                     ),

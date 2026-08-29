@@ -33,7 +33,7 @@ class FullPlayerBottomSheet extends StatelessWidget {
     final posMs = storage.currentPosition.inMilliseconds.toDouble();
     final durMs = storage.totalDuration.inMilliseconds.toDouble();
     final maxSlider = durMs > 0 ? durMs : 1.0;
-    final currentSlider = posMs.clamp(0.0, maxSlider);
+    final currentSlider = posMs.clamp(0.0, maxSlider).toDouble();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
@@ -116,7 +116,7 @@ class FullPlayerBottomSheet extends StatelessWidget {
               children: List.generate(35, (index) {
                 final isPlaying = storage.playerState == PlayerState.playing;
                 final factor = isPlaying
-                    ? ((index % 5 + 1) * 12.0 + (index % 3) * 8.0).clamp(6.0, 60.0)
+                    ? ((index % 5 + 1) * 12.0 + (index % 3) * 8.0).clamp(6.0, 60.0).toDouble()
                     : 6.0;
                 return AnimatedContainer(
                   duration: Duration(milliseconds: 200 + (index % 5) * 50),
@@ -262,8 +262,12 @@ class FullPlayerBottomSheet extends StatelessWidget {
                   onPressed: () {
                     if (storage.playerState == PlayerState.playing) {
                       storage.pausePlayer();
-                    } else {
+                    } else if (storage.playerState == PlayerState.paused ||
+                        storage.playerState == PlayerState.completed) {
                       storage.resumePlayer();
+                    } else {
+                      // stopped: (re)start the current file
+                      storage.playFile(file.path);
                     }
                   },
                 ),

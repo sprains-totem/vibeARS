@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -127,13 +126,13 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
             onPressed: () async {
               final newPath = textController.text.trim();
               if (newPath.isNotEmpty) {
-                await storage.setStoragePath(newPath);
+                final ok = await storage.setStoragePath(newPath);
                 if (mounted) {
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('已更改存储路径为: $newPath'),
-                      backgroundColor: VibeTheme.successGreen,
+                      content: Text(ok ? '已更改存储路径为: $newPath' : '路径不可写，无法应用: $newPath'),
+                      backgroundColor: ok ? VibeTheme.successGreen : VibeTheme.errorRed,
                     ),
                   );
                 }
@@ -143,7 +142,7 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
           ),
         ],
       ),
-    );
+    ).then((_) => textController.dispose());
   }
 
   void _showCopyToDirectoryDialog(BuildContext context, LocalStorageService storage) {
@@ -194,7 +193,7 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
           ),
         ],
       ),
-    );
+    ).then((_) => textController.dispose());
   }
 
   @override
@@ -615,8 +614,11 @@ class _LocalRecordingsScreenState extends State<LocalRecordingsScreen> {
                         onPressed: () {
                           if (storage.playerState == PlayerState.playing) {
                             storage.pausePlayer();
-                          } else {
+                          } else if (storage.playerState == PlayerState.paused ||
+                              storage.playerState == PlayerState.completed) {
                             storage.resumePlayer();
+                          } else {
+                            storage.playFile(storage.currentlyPlayingPath!);
                           }
                         },
                       ),

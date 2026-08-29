@@ -40,7 +40,7 @@ class AppState extends ChangeNotifier {
   Timer? _durationTimer;
   double _currentAmplitude = 0.0;
   double _currentDb = 0.0;
-  final List<double> _waveformHistory = List.filled(50, 0.0);
+  final List<double> _waveformHistory = List<double>.filled(50, 0.0, growable: true);
 
   // Subscriptions
   StreamSubscription? _audioFrameSub;
@@ -71,7 +71,7 @@ class AppState extends ChangeNotifier {
   Future<void> initialize() async {
     await _loadPreferences();
     await _audioEngine.initialize();
-    _storage.initialize();
+    await _storage.initialize();
     await _uploadQueue.loadHistory();
 
     _uploadQueue.configure(

@@ -55,7 +55,9 @@ class AudioEngineService {
 
   Future<List<AudioInputDevice>> getAudioDevices() async {
     try {
-      final List<dynamic>? rawList = await _methodChannel.invokeListMethod('getAudioDevices');
+      final List<dynamic>? rawList = await _methodChannel
+          .invokeListMethod('getAudioDevices')
+          .timeout(const Duration(seconds: 10));
       if (rawList == null) return [];
 
       return rawList.map((item) {
@@ -151,7 +153,8 @@ class AudioEngineService {
     try {
       final outputDir = await getRecordingsDirectory(customPath: storagePath);
 
-      final result = await _methodChannel.invokeMethod<bool>('startRecording', {
+      final result = await _methodChannel
+          .invokeMethod<bool>('startRecording', {
         'sampleRate': audioConfig.sampleRate,
         'channelCount': audioConfig.channelCount,
         'format': audioConfig.format.fileExtension,
@@ -159,11 +162,14 @@ class AudioEngineService {
         'slicerEnabled': slicerConfig.enabled,
         'sliceDurationMinutes': slicerConfig.intervalMinutes,
         'outputDir': outputDir,
-      });
+      }).timeout(const Duration(seconds: 15));
 
       _isRecording = result == true;
       _isPaused = false;
       return _isRecording;
+    } on TimeoutException {
+      print('[AudioEngineService] startRecording timed out');
+      return false;
     } catch (e) {
       print('[AudioEngineService] Error starting recording: $e');
       return false;

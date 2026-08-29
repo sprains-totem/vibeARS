@@ -95,22 +95,31 @@ class _StreamingScreenState extends State<StreamingScreen> {
                     runSpacing: 8,
                     children: StreamingProtocol.values.map((proto) {
                       final isSelected = config.protocol == proto;
+                      final isDisabled = proto == StreamingProtocol.webrtcAudio;
                       return ChoiceChip(
                         label: Text(proto.displayName),
                         selected: isSelected,
+                        enabled: !isDisabled,
                         selectedColor: VibeTheme.primaryNeon,
                         labelStyle: TextStyle(
-                          color: isSelected ? Colors.black : Colors.white,
+                          color: isSelected
+                              ? Colors.black
+                              : (isDisabled ? Colors.grey : Colors.white),
                           fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           fontSize: 12,
                         ),
                         onSelected: (selected) {
-                          if (selected) {
+                          if (selected && !isDisabled) {
                             state.updateStreamingConfig(config.copyWith(protocol: proto));
                           }
                         },
                       );
                     }).toList(),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'WebRTC 通道即将支持（当前实时推流基于 WebSocket 二进制帧，低延迟且兼容主流 ASR / 通话后端）。',
+                    style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                   ),
                   const SizedBox(height: 16),
 

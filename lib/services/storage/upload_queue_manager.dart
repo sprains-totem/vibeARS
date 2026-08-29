@@ -69,10 +69,20 @@ class UploadQueueManager extends ChangeNotifier {
   }
 
   void retrySlice(String sliceId) {
-    final item = _items.firstWhere((i) => i.id == sliceId, orElse: () => throw Exception('Slice not found'));
+    final items = _items.where((i) => i.id == sliceId).toList();
+    if (items.isEmpty) return;
+    final item = items.first;
     item.retryCount = 0;
     item.errorMessage = null;
+    _markPending(item);
+    if (!_pendingQueue.contains(item)) {
+      _pendingQueue.add(item);
+    }
+    notifyListeners();
+    _processNext();
+  }
 
+  void _markPending(AudioSliceItem item) {
     if (_slicerConfig.target == SlicerUploadTarget.webdav || _slicerConfig.target == SlicerUploadTarget.both) {
       if (item.webdavStatus == SliceUploadStatus.failed) {
         item.webdavStatus = SliceUploadStatus.pending;
@@ -83,12 +93,6 @@ class UploadQueueManager extends ChangeNotifier {
         item.s3Status = SliceUploadStatus.pending;
       }
     }
-
-    if (!_pendingQueue.contains(item)) {
-      _pendingQueue.add(item);
-    }
-    notifyListeners();
-    _processNext();
   }
 
   void clearHistory() {
@@ -198,6 +202,25 @@ class UploadQueueManager extends ChangeNotifier {
     _isProcessing = false;
     notifyListeners();
     _saveHistory();
+
+    // Schedule automatic retry for failed items (max 3 attempts, exponential backoff).
+    if ((item.webdavStatus == SliceUploadStatus.failed ||
+            item.s3Status == SliceUploadStatus.failed) &&
+        item.retryCount < 3) {
+      item.retryCount++;
+      final delaySeconds = 5 * (1 << (item.retryCount - 1)); // 5s, 10s, 20s
+      Timer(Duration(seconds: delaySeconds), () {
+        if (_items.contains(item) &&
+            (item.webdavStatus == SliceUploadStatus.failed ||
+                item.s3Status == SliceUploadStatus.failed)) {
+          _markPending(item);
+          if (!_pendingQueue.contains(item)) {
+            _pendingQueue.add(item);
+          }
+          _processNext();
+        }
+      });
+    }
 
     // Process remainder
     _processNext();

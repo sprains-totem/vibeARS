@@ -138,19 +138,44 @@ class LocalStorageService extends ChangeNotifier {
     await refreshFiles();
   }
 
-  Future<void> setStoragePath(String newPath) async {
+  /// Returns true if the path was accepted (directory exists or was created).
+  /// Returns false if the directory could not be created (e.g. no permission),
+  /// in which case the previous storage path stays active.
+  Future<bool> setStoragePath(String newPath) async {
     final clean = newPath.trim();
-    if (clean.isNotEmpty) {
+    if (clean.isEmpty) return false;
+
+    try {
       final dir = Directory(clean);
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
+      if (!await _isDirectoryWritable(dir)) {
+        print('[LocalStorageService] Path is not writable: $clean');
+        return false;
+      }
+    } catch (e) {
+      print('[LocalStorageService] Failed to apply storage path: $e');
+      return false;
     }
+
     _customStoragePath = clean;
     final sp = await SharedPreferences.getInstance();
     await sp.setString('vibears_custom_storage_path', clean);
     notifyListeners();
     await refreshFiles();
+    return true;
+  }
+
+  Future<bool> _isDirectoryWritable(Directory dir) async {
+    try {
+      final probe = File('${dir.path}/.vibears_probe');
+      await probe.writeAsString('ok', flush: true);
+      await probe.delete();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<String> getActiveStoragePath() async {
@@ -178,7 +203,9 @@ class LocalStorageService extends ChangeNotifier {
       for (final entity in entities) {
         if (entity is File) {
           final ext = p.extension(entity.path).toLowerCase();
-          if (['.wav', '.m4a', '.aac', '.mp3', '.opus', '.ogg', '.pcm'].contains(ext)) {
+          // Only list playable audio files; raw .pcm slices from older
+          // versions are skipped because they cannot be decoded by the player.
+          if (['.wav', '.m4a', '.aac', '.mp3', '.opus', '.ogg'].contains(ext)) {
             final stat = entity.statSync();
             list.add(
               LocalRecordingFile(
@@ -238,6 +265,7 @@ class LocalStorageService extends ChangeNotifier {
     await _player.stop();
     _currentlyPlayingPath = null;
     _currentPosition = Duration.zero;
+    _totalDuration = Duration.zero;
     notifyListeners();
   }
 
@@ -266,7 +294,7 @@ class LocalStorageService extends ChangeNotifier {
   }
 
   Future<void> setVolume(double vol) async {
-    _volume = vol.clamp(0.0, 1.0);
+    _volume = vol.clamp(0.0, 1.0).toDouble();
     await _player.setVolume(_volume);
     notifyListeners();
   }
@@ -336,7 +364,10 @@ class LocalStorageService extends ChangeNotifier {
 
   void _onTrackComplete() {
     if (_playMode == PlayMode.loopSingle && _currentlyPlayingPath != null) {
-      playFile(_currentlyPlayingPath!);
+      // Restart the same track from the beginning.
+      _player.seek(Duration.zero).then((_) => _player.resume()).catchError((_) {
+        playFile(_currentlyPlayingPath!);
+      });
     } else {
       playNext();
     }
@@ -398,7 +429,7 @@ class LocalStorageService extends ChangeNotifier {
         if (await file.exists()) {
           final bytes = await file.readAsBytes();
           final fileName = p.basename(filePath);
-          archive.addFile(ArchiveFile(fileName, bytes.length, bytes));
+          archive.addFile(ArchiveFile.bytes(fileName, bytes));
         }
       }
 

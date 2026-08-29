@@ -43,7 +43,7 @@ jobs:
 
       - name: Initialize Platform Skeletons & Dependencies
         run: |
-          flutter create --project-name vibears --platforms=android,ios --org com.vibears .
+          flutter create --project-name vibears --platforms=android,ios --org com.vibears --no-overwrite .
           flutter pub get
 
       - name: Build Android Release APK
@@ -80,7 +80,7 @@ jobs:
 
       - name: Initialize Platform Skeletons & Dependencies
         run: |
-          flutter create --project-name vibears --platforms=android,ios --org com.vibears .
+          flutter create --project-name vibears --platforms=android,ios --org com.vibears --no-overwrite .
           flutter pub get
 
       - name: Build iOS Application (No Code Sign)

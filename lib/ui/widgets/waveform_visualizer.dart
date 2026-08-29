@@ -80,7 +80,7 @@ class WaveformVisualizer extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: waveform.map((amp) {
-                final barHeight = isRecording && !isPaused ? (amp * 65.0).clamp(4.0, 65.0) : 4.0;
+                final barHeight = isRecording && !isPaused ? (amp * 65.0).clamp(4.0, 65.0).toDouble() : 4.0;
                 return Container(
                   width: 3.5,
                   height: barHeight,

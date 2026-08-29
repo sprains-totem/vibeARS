@@ -17,12 +17,14 @@ class StreamingService extends ChangeNotifier {
 
   Timer? _statsTimer;
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
   int _bytesInCurrentSecond = 0;
   int _totalBytesSent = 0;
   int _totalPacketsSent = 0;
   int _droppedPackets = 0;
   DateTime? _lastPingTime;
   int _lastLatencyMs = 0;
+  bool _manuallyClosed = false;
 
   StreamingState get state => _state;
   StreamingStats get stats => _stats;
@@ -34,11 +36,15 @@ class StreamingService extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    if (_state == StreamingState.connected || _state == StreamingState.connecting) {
+      return;
+    }
     if (!_config.isValid) {
       _setState(StreamingState.error);
       return;
     }
 
+    _manuallyClosed = false;
     _setState(StreamingState.connecting);
     _resetStats();
     _startStatsTimer();
@@ -50,36 +56,67 @@ class StreamingService extends ChangeNotifier {
         headers['Authorization'] = 'Bearer ${_config.authToken}';
       }
 
-      _channel = IOWebSocketChannel.connect(
+      final channel = IOWebSocketChannel.connect(
         uri,
         headers: headers,
         pingInterval: const Duration(seconds: 10),
       );
+      _channel = channel;
+
+      // Wait for the underlying socket to actually open before reporting connected.
+      await channel.ready.timeout(const Duration(seconds: 15));
 
       // Listen for server incoming messages (Heartbeats, ACK, control messages)
-      _channel?.stream.listen(
+      channel.stream.listen(
         (message) {
           _handleServerMessage(message);
         },
         onDone: () {
           print('[StreamingService] WebSocket stream closed');
-          if (_state != StreamingState.disconnected) {
+          if (!_manuallyClosed) {
             _onDisconnect();
+          } else {
+            _setState(StreamingState.disconnected);
           }
         },
         onError: (error) {
           print('[StreamingService] WebSocket error: $error');
-          _onDisconnect();
+          if (!_manuallyClosed) {
+            _onDisconnect();
+          }
         },
         cancelOnError: true,
       );
 
       _setState(StreamingState.connected);
       _sendHandshake();
+      _startHeartbeat();
     } catch (e) {
       print('[StreamingService] Connection error: $e');
-      _onDisconnect();
+      _channel?.sink.close();
+      _channel = null;
+      if (!_manuallyClosed) {
+        _onDisconnect();
+      } else {
+        _setState(StreamingState.disconnected);
+      }
     }
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (_state != StreamingState.connected || _channel == null) return;
+      _lastPingTime = DateTime.now();
+      try {
+        _channel?.sink.add(
+          jsonEncode({
+            'event': 'ping',
+            'timestamp': DateTime.now().toIso8601String(),
+          }),
+        );
+      } catch (_) {}
+    });
   }
 
   void _sendHandshake() {
@@ -145,11 +182,11 @@ class StreamingService extends ChangeNotifier {
   }
 
   void _onDisconnect() {
-    if (_config.autoReconnect && _state != StreamingState.disconnected) {
+    if (_config.autoReconnect) {
       _setState(StreamingState.reconnecting);
       _reconnectTimer?.cancel();
       _reconnectTimer = Timer(const Duration(seconds: 3), () {
-        if (_state == StreamingState.reconnecting) {
+        if (_state == StreamingState.reconnecting && !_manuallyClosed) {
           connect();
         }
       });
@@ -159,9 +196,11 @@ class StreamingService extends ChangeNotifier {
   }
 
   void disconnect() {
-    _setState(StreamingState.disconnected);
+    _manuallyClosed = true;
+    _heartbeatTimer?.cancel();
     _reconnectTimer?.cancel();
     _statsTimer?.cancel();
+    _setState(StreamingState.disconnected);
     try {
       _channel?.sink.close();
     } catch (_) {}

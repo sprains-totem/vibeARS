@@ -55,7 +55,7 @@ class AudioCaptureService : Service(), AudioManager.OnAudioFocusChangeListener {
         sliceDurationMs: Long,
         outputDir: String,
         listener: AudioPipelineListener
-    ) {
+    ): Boolean {
         val notification = buildForegroundNotification("正在进行不间断后台录音...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
@@ -80,7 +80,7 @@ class AudioCaptureService : Service(), AudioManager.OnAudioFocusChangeListener {
             outputDir = outputDir,
             listener = listener
         )
-        pipeline?.start()
+        return pipeline?.start() == true
     }
 
     fun pauseRecording() {

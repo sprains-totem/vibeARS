@@ -46,6 +46,10 @@ class AudioPipeline(
 
     private val audioDeviceManager = AudioDeviceManager(context)
 
+    // The native capture layer only emits raw PCM; any requested format other
+    // than WAV is stored as WAV (PCM) so the output is always a playable file.
+    private val isWavOutput: Boolean = format.lowercase() == "wav" || format.lowercase() == "pcm"
+
     // Current slice file tracking
     private var currentSliceFile: File? = null
     private var currentSliceOutputStream: FileOutputStream? = null
@@ -54,8 +58,32 @@ class AudioPipeline(
     private var sliceSequence: Int = 1
     private val sessionId: String = UUID.randomUUID().toString()
 
-    fun start() {
-        if (isRecording.get()) return
+    fun start(): Boolean {
+        if (isRecording.get()) return true
+
+        // Validate that the output directory is actually writable before
+        // starting the capture loop, otherwise the session would silently
+        // produce no files at all.
+        try {
+            val dir = File(outputDir)
+            if (!dir.exists() && !dir.mkdirs()) {
+                listener.onError("Failed to create output directory: $outputDir")
+                return false
+            }
+            if (!dir.canWrite()) {
+                listener.onError("Output directory is not writable: $outputDir")
+                return false
+            }
+            val probe = File(dir, ".vibears_write_probe")
+            if (!probe.createNewFile()) {
+                listener.onError("Output directory is not writable: $outputDir")
+                return false
+            }
+            probe.delete()
+        } catch (e: Exception) {
+            listener.onError("Output directory is not writable: ${e.message}")
+            return false
+        }
 
         val channelConfig = if (channelCount == 1) {
             AudioFormat.CHANNEL_IN_MONO
@@ -65,6 +93,10 @@ class AudioPipeline(
         val audioEncoding = AudioFormat.ENCODING_PCM_16BIT
 
         val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding)
+        if (minBufferSize <= 0) {
+            listener.onError("Sample rate $sampleRate is not supported by this device")
+            return false
+        }
         val bufferSize = (minBufferSize * 2).coerceAtLeast(sampleRate * channelCount * 2 / 10) // 100ms buffer
 
         try {
@@ -78,7 +110,7 @@ class AudioPipeline(
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 listener.onError("AudioRecord failed to initialize")
-                return
+                return false
             }
 
             // Apply preferred hardware microphone if specified
@@ -91,15 +123,22 @@ class AudioPipeline(
             audioRecord?.startRecording()
 
             // Initialize the first slice file
-            openNextSlice()
+            if (!openNextSlice()) {
+                isRecording.set(false)
+                listener.onError("Failed to create initial slice file")
+                return false
+            }
 
             recordThread = Thread({ recordLoop(bufferSize) }, "AudioCaptureThread")
             recordThread?.priority = Thread.MAX_PRIORITY
             recordThread?.start()
             Log.d(TAG, "Audio recording pipeline started successfully")
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio recording", e)
+            isRecording.set(false)
             listener.onError("Failed to start audio recording: ${e.message}")
+            return false
         }
     }
 
@@ -185,28 +224,35 @@ class AudioPipeline(
                     // 4. Check if slice duration reached -> Seamless Rollover
                     if (slicerEnabled && currentSlicePcmBytesWritten >= maxBytesPerSlice) {
                         closeCurrentSlice()
-                        openNextSlice()
+                        if (!openNextSlice()) {
+                            // Failed to open the next slice: stop the session
+                            // rather than silently dropping all audio.
+                            listener.onError("Failed to create next slice file, recording stopped")
+                            isRecording.set(false)
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error writing audio slice bytes", e)
+                    listener.onError("Error writing audio slice: ${e.message}")
+                    isRecording.set(false)
                 }
             }
         }
     }
 
-    private fun openNextSlice() {
-        try {
+    private fun openNextSlice(): Boolean {
+        return try {
             val dir = File(outputDir)
             if (!dir.exists()) {
                 dir.mkdirs()
             }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val extension = if (format.lowercase() == "wav") "wav" else "pcm"
+            val extension = if (isWavOutput) "wav" else "pcm"
             val fileName = "vibe_slice_${timeStamp}_part${sliceSequence}.$extension"
             val file = File(dir, fileName)
 
             val fos = FileOutputStream(file)
-            if (format.lowercase() == "wav") {
+            if (isWavOutput) {
                 // Write 44-byte empty placeholder header for WAV
                 val emptyHeader = ByteArray(44)
                 fos.write(emptyHeader)
@@ -217,8 +263,11 @@ class AudioPipeline(
             currentSlicePcmBytesWritten = 0L
             currentSliceStartTime = System.currentTimeMillis()
             Log.d(TAG, "Opened new slice file: ${file.absolutePath}, sequence: $sliceSequence")
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open new slice file", e)
+            listener.onError("Failed to create slice file: ${e.message}")
+            false
         }
     }
 
@@ -236,11 +285,12 @@ class AudioPipeline(
                 System.currentTimeMillis() - currentSliceStartTime
             }
 
-            if (format.lowercase() == "wav") {
+            if (isWavOutput) {
                 // Update WAV header with exact total length
                 writeWavHeader(file, currentSlicePcmBytesWritten, sampleRate, channelCount, 16)
             }
 
+            val sizeBytes = file.length().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             val sliceMap = mapOf(
                 "id" to UUID.randomUUID().toString(),
                 "sequence" to sliceSequence,
@@ -248,7 +298,7 @@ class AudioPipeline(
                 "localPath" to file.absolutePath,
                 "fileName" to file.name,
                 "durationMs" to actualDurationMs.toInt(),
-                "fileSizeBytes" to file.length().toInt(),
+                "fileSizeBytes" to sizeBytes,
                 "createdAt" to SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
             )
 

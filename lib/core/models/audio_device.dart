@@ -40,6 +40,17 @@ enum AudioDeviceType {
       case 'usb_device':
       case 'usb_headset':
         return AudioDeviceType.usbAudio;
+      case 'auxline':
+      case 'aux_line':
+      case 'line_in':
+      case 'linein':
+        return AudioDeviceType.auxLine;
+      case 'telephony':
+        return AudioDeviceType.telephony;
+      case 'builtinspeaker':
+      case 'built_in_speaker':
+      case 'speaker':
+        return AudioDeviceType.builtInSpeaker;
       default:
         return AudioDeviceType.unknown;
     }

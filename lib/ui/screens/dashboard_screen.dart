@@ -126,7 +126,17 @@ class DashboardScreen extends StatelessWidget {
               children: [
                 if (!state.isRecording) ...[
                   ElevatedButton.icon(
-                    onPressed: () => state.startRecording(),
+                    onPressed: () async {
+                      final ok = await state.startRecording();
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('录音启动失败：请检查麦克风权限与存储路径可写性'),
+                            backgroundColor: VibeTheme.errorRed,
+                          ),
+                        );
+                      }
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: VibeTheme.errorRed,
                       foregroundColor: Colors.white,

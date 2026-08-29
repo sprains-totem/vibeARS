@@ -184,13 +184,13 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
             ctx.startService(serviceIntent)
         }
 
-        ctx.bindService(serviceIntent, object : ServiceConnection {
+        val bindOk = ctx.bindService(serviceIntent, object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 val binder = service as? AudioCaptureService.LocalBinder
                 audioCaptureService = binder?.getService()
                 isServiceBound = true
 
-                audioCaptureService?.startRecording(
+                val started = audioCaptureService?.startRecording(
                     sampleRate = sampleRate,
                     channelCount = channelCount,
                     format = format,
@@ -221,7 +221,15 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                             Log.e(TAG, "Pipeline error: $errorMessage")
                         }
                     }
-                )
+                ) == true
+
+                if (!started) {
+                    // Recording failed to start; stop the foreground service we just launched.
+                    audioCaptureService?.stopRecording()
+                    unbindCaptureService()
+                    result.error("RECORD_START_FAILED", "Failed to start audio recording", null)
+                    return
+                }
                 result.success(true)
             }
 
@@ -230,6 +238,10 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 isServiceBound = false
             }
         }, Context.BIND_AUTO_CREATE)
+
+        if (!bindOk) {
+            result.error("SERVICE_BIND_FAILED", "Failed to bind AudioCaptureService", null)
+        }
     }
 
     private fun unbindCaptureService() {
