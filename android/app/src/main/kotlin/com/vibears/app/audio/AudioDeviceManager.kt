@@ -108,9 +108,6 @@ class AudioDeviceManager(private val context: Context) {
      */
     fun prepareDeviceRoute(deviceId: Int?): Boolean {
         if (!isScoDevice(deviceId)) return true
-        val target = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).find { it.id == deviceId }
-        } else null
 
         // CRITICAL: VOICE_COMMUNICATION capture requires the audio mode to be
         // MODE_IN_COMMUNICATION, otherwise the SCO channel is never established
@@ -123,24 +120,43 @@ class AudioDeviceManager(private val context: Context) {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Modern API: synchronous-ish communication device selection.
+            // Modern API (Android 12+): the Bluetooth SCO device must be taken
+            // from availableCommunicationDevices — setCommunicationDevice only
+            // routes devices from THAT list. Using getDevices(GET_DEVICES_INPUTS)
+            // returns true but never actually routes, so the mic silently falls
+            // back to the built-in one (the exact "no audio" symptom we saw).
             return try {
+                val commDevices = audioManager.availableCommunicationDevices
+                nl(TAG, "availableCommunicationDevices: ${commDevices.map { "${it.id}:${getDeviceTypeName(it.type)}" }}")
+                val target = commDevices.firstOrNull { it.id == deviceId }
+                    ?: commDevices.firstOrNull {
+                        it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                            it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+                    }
                 if (target == null) {
-                    nl(TAG, "SCO device $deviceId no longer present")
+                    nl(TAG, "No SCO communication device found (id=$deviceId). 耳机可能未连接或仅 A2DP 模式")
                     return false
                 }
                 audioManager.setCommunicationDevice(target)
-                nl(TAG, "setCommunicationDevice(SCO) OK for $deviceId")
-                // Verify what the framework actually routed to.
-                val comm = audioManager.communicationDevice
+                nl(TAG, "setCommunicationDevice -> ${getDeviceTypeName(target.type)} (id=$deviceId)")
+
+                // Verify the framework really routed to it (poll up to ~1.5s).
+                var routed: AudioDeviceInfo? = null
+                for (i in 0 until 5) {
+                    Thread.sleep(300)
+                    routed = audioManager.communicationDevice
+                    if (routed != null) break
+                }
+                val ok = routed != null
                 nl(
                     TAG,
                     "communicationDevice after set: " +
-                        (comm?.let { "id=${it.id} type=${getDeviceTypeName(it.type)}" } ?: "NULL (no comm device!)")
+                        (routed?.let { "id=${it.id} type=${getDeviceTypeName(it.type)}" } ?: "NULL (no comm device!)")
                 )
-                // Give the framework a moment to route before AudioRecord init.
-                Thread.sleep(300)
-                true
+                if (!ok) {
+                    nl(TAG, "setCommunicationDevice 未生效，蓝牙麦克风将不可用")
+                }
+                ok
             } catch (e: Exception) {
                 nl(TAG, "setCommunicationDevice failed: ${e.message}")
                 false
