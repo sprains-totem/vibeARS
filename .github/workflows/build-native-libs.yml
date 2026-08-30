@@ -50,14 +50,22 @@ jobs:
 
           build_abi() {
             local TARGET="$1"; local OUT="$2"
+            # NDK wrapper names vary (with/without API level suffix); find one.
+            local WRAPPER
+            WRAPPER=$(ls "$TOOLCHAIN/bin/${TARGET}"*-clang 2>/dev/null | head -1)
+            if [ -z "$WRAPPER" ]; then
+              echo "No clang wrapper for $TARGET"; ls "$TOOLCHAIN/bin" | grep clang | head -20
+              exit 1
+            fi
+            echo "Using wrapper: $WRAPPER"
             export AR="$TOOLCHAIN/bin/llvm-ar"
             export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
             export LD="$TOOLCHAIN/bin/ld.lld"
             export STRIP="$TOOLCHAIN/bin/llvm-strip"
             export NM="$TOOLCHAIN/bin/llvm-nm"
             export OBJDUMP="$TOOLCHAIN/bin/llvm-objdump"
-            export CC="$TOOLCHAIN/bin/${TARGET}${API}-clang"
-            export CXX="$TOOLCHAIN/bin/${TARGET}${API}-clang++"
+            export CC="$WRAPPER"
+            export CXX="${WRAPPER/clang/clang++}"
             export CFLAGS="-O3"
 
             # Diagnostic: verify the toolchain can link before running configure.
