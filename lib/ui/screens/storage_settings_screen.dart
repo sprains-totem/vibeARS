@@ -570,9 +570,8 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '原生采集引擎支持 WAV (PCM 无损) 与 AAC/M4A 有损压缩两种录制格式，'
-                                  '选择 AAC 时下方码率设置将真实生效。MP3/Opus 需集成第三方编码库，'
-                                  '当前可通过“录音库”的分享 / ZIP 打包 / 目录复制导出转换。',
+                                  '录音格式：WAV 与 AAC/M4A 由原生引擎实时录制；MP3 与 Opus 采用内置权威编码库（LAME / libopus）在录音结束后转码生成。'
+                                  '选择 AAC/MP3/Opus 时下方码率设置真实生效。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),
@@ -586,33 +585,21 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           runSpacing: 8,
                           children: AudioFormatType.values.map((fmt) {
                             final isSelected = audioConfig.format == fmt;
-                            // WAV and AAC/M4A are natively recorded. MP3/Opus
-                            // need third-party encoder libraries; selecting
-                            // them explains the situation instead of silently
-                            // falling back.
-                            final isNativeSupported = fmt == AudioFormatType.wav || fmt == AudioFormatType.aacM4a;
+                            // All four formats are supported:
+                            // - WAV/AAC: recorded natively in real time.
+                            // - MP3/Opus: captured as WAV, then transcoded after
+                            //   recording stops via the bundled FFmpegKit.
                             return ChoiceChip(
                               label: Text(fmt.displayName),
                               selected: isSelected,
-                              onSelected: isNativeSupported
-                                  ? (selected) {
-                                      if (selected) {
-                                        state.updateAudioConfig(audioConfig.copyWith(format: fmt));
-                                      }
-                                    }
-                                  : (_) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('${fmt.displayName} 编码需集成第三方编码库（LAME/libopus）；当前原生支持 WAV 与 AAC/M4A，其他格式可在录音库通过分享 / ZIP 打包导出转换。'),
-                                          duration: const Duration(seconds: 4),
-                                        ),
-                                      );
-                                    },
+                              onSelected: (selected) {
+                                if (selected) {
+                                  state.updateAudioConfig(audioConfig.copyWith(format: fmt));
+                                }
+                              },
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
-                                color: isSelected
-                                    ? Colors.black
-                                    : (isNativeSupported ? Colors.white : Colors.grey),
+                                color: isSelected ? Colors.black : Colors.white,
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                 fontSize: 13,
                               ),
@@ -649,10 +636,12 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                         // Channel Mode
                         const Text('声道模式 (Channel Mode)：', style: TextStyle(fontSize: 14)),
                         const SizedBox(height: 8),
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
                             ChoiceChip(
-                              label: const Text('单声道 (Mono - 1ch)'),
+                              label: const Text('单声道 (Mono)'),
                               selected: audioConfig.channelCount == 1,
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
@@ -661,9 +650,8 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               ),
                               onSelected: (s) => state.updateAudioConfig(audioConfig.copyWith(channelCount: 1)),
                             ),
-                            const SizedBox(width: 10),
                             ChoiceChip(
-                              label: const Text('立体声 (Stereo - 2ch)'),
+                              label: const Text('立体声 (Stereo)'),
                               selected: audioConfig.channelCount == 2,
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(

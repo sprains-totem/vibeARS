@@ -194,6 +194,9 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 requestManageStorage()
                 result.success(true)
             }
+            "probeEncoders" -> {
+                result.success(probeEncoders())
+            }
             else -> result.notImplemented()
         }
     }
@@ -387,6 +390,47 @@ class VibeAudioPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Activity
                 context?.startActivity(intent)
             }
         }
+    }
+
+    /**
+     * Probes which audio encoders are actually available on this device.
+     * Returns a map of format -> available:
+     * - AAC: system MediaCodec (audio/mp4a-latm)
+     * - Opus: system MediaCodec (audio/opus, Android 10+) AND bundled FFmpegKit
+     * - MP3: bundled FFmpegKit (libmp3lame) — system has no MP3 encoder
+     */
+    private fun probeEncoders(): Map<String, Boolean> {
+        val result = mutableMapOf<String, Boolean>()
+        val systemMimes = listOf(
+            "audio/mp4a-latm", // AAC
+            "audio/opus",      // Opus (Android 10+)
+            "audio/mpeg",      // MP3 (usually decoder-only, for reference)
+            "audio/3gpp"       // AMR-NB
+        )
+        for (mime in systemMimes) {
+            try {
+                var found = false
+                val codecList = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                for (info in codecList.codecInfos) {
+                    if (!info.isEncoder) continue
+                    if (info.supportedTypes.any { it.equals(mime, ignoreCase = true) }) {
+                        found = true
+                        break
+                    }
+                }
+                result["system:$mime"] = found
+            } catch (e: Exception) {
+                result["system:$mime"] = false
+            }
+        }
+        // Bundled FFmpegKit (audio edition: libmp3lame + libopus inside).
+        result["ffmpegkit"] = try {
+            System.loadLibrary("ffmpegkit")
+            true
+        } catch (e: Throwable) {
+            false
+        }
+        return result
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {

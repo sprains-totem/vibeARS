@@ -42,6 +42,9 @@ dependencies:
   # Background & Notification
   flutter_local_notifications: ^17.1.2
 
+  # Third-party audio encoding (prebuilt FFmpegKit audio: libmp3lame + libopus)
+  ffmpeg_kit_flutter_audio: ^6.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
