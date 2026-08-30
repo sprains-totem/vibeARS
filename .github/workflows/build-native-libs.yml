@@ -34,7 +34,7 @@ jobs:
       - name: Download LAME source
         run: |
           mkdir -p build-src
-          curl -fL "https://downloads.sourceforge.net/project/lame/3.100/lame-3.100.tar.gz" -o build-src/lame.tar.gz
+          curl -fL "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz" -o build-src/lame.tar.gz
           tar -xzf build-src/lame.tar.gz -C build-src
           ls build-src
 
