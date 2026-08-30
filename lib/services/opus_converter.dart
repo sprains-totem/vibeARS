@@ -5,6 +5,24 @@ import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 import 'log_collector.dart';
 
+// ---- Native function typedefs (must be top-level) ----
+typedef _StrErrNative = Pointer<Utf8> Function(Int32);
+typedef _StrErrDart = Pointer<Utf8> Function(int);
+typedef _CommentsCreateNative = Pointer<Void> Function();
+typedef _CommentsCreateDart = Pointer<Void> Function();
+typedef _CommentsDestroyNative = Void Function(Pointer<Void>);
+typedef _CommentsDestroyDart = void Function(Pointer<Void>);
+typedef _CreateFileNative = Pointer<Void> Function(
+    Pointer<Utf8>, Pointer<Void>, Int32, Int32, Int32, Pointer<Int32>);
+typedef _CreateFileDart = Pointer<Void> Function(
+    Pointer<Utf8>, Pointer<Void>, int, int, int, Pointer<Int32>);
+typedef _WriteNative = Int32 Function(Pointer<Void>, Pointer<Int16>, Int32);
+typedef _WriteDart = int Function(Pointer<Void>, Pointer<Int16>, int);
+typedef _DrainNative = Int32 Function(Pointer<Void>);
+typedef _DrainDart = int Function(Pointer<Void>);
+typedef _DestroyNative = Void Function(Pointer<Void>);
+typedef _DestroyDart = void Function(Pointer<Void>);
+
 /// iOS Opus transcoding via the bundled libopusenc (Opus.xcframework vendored
 /// and linked with -framework Opus). The same WAV -> .opus (OggOpus) pipeline
 /// as MP3: record native WAV, then transcode after recording stops.
@@ -12,24 +30,6 @@ class OpusConverter {
   static bool get _isSupported => Platform.isIOS;
 
   static late final DynamicLibrary _lib = DynamicLibrary.process();
-
-  // Native function typedefs (required by lookupFunction).
-  typedef _StrErrNative = Pointer<Utf8> Function(Int32);
-  typedef _StrErrDart = Pointer<Utf8> Function(int);
-  typedef _CommentsCreateNative = Pointer<Void> Function();
-  typedef _CommentsCreateDart = Pointer<Void> Function();
-  typedef _CommentsDestroyNative = Void Function(Pointer<Void>);
-  typedef _CommentsDestroyDart = void Function(Pointer<Void>);
-  typedef _CreateFileNative = Pointer<Void> Function(
-      Pointer<Utf8>, Pointer<Void>, Int32, Int32, Int32, Pointer<Int32>);
-  typedef _CreateFileDart = Pointer<Void> Function(
-      Pointer<Utf8>, Pointer<Void>, int, int, int, Pointer<Int32>);
-  typedef _WriteNative = Int32 Function(Pointer<Void>, Pointer<Int16>, Int32);
-  typedef _WriteDart = int Function(Pointer<Void>, Pointer<Int16>, int);
-  typedef _DrainNative = Int32 Function(Pointer<Void>);
-  typedef _DrainDart = int Function(Pointer<Void>);
-  typedef _DestroyNative = Void Function(Pointer<Void>);
-  typedef _DestroyDart = void Function(Pointer<Void>);
 
   static late final _StrErrDart _strerr =
       _lib.lookupFunction<_StrErrNative, _StrErrDart>('ope_strerror');
@@ -95,8 +95,7 @@ class OpusConverter {
       final enc = _encoderCreateFile(pathC, comments, sampleRate, channels, 0, err);
       calloc.free(pathC);
       if (enc.address == 0) {
-        final msg = err.value != 0 ? _errString(err.value) : 'unknown';
-        LogCollector.instance.log('OpusConverter', '编码器创建失败: $msg');
+        LogCollector.instance.log('OpusConverter', '编码器创建失败: ${_errString(err.value)}');
         _commentsDestroy(comments);
         calloc.free(err);
         return null;
@@ -111,8 +110,8 @@ class OpusConverter {
       for (var i = 0; i < pcm.length; i += frameInts) {
         final n = (i + frameInts <= pcm.length) ? frameInts : pcm.length - i;
         buffer.asTypedList(n).setAll(0, pcm.sublist(i, i + n));
-        final rc = _encoderWrite(enc, buffer, (n ~/ channels).clamp(1, frameSamples));
-        if (rc < 0 && rc != -1 /* OPE_*-ish negative */) {
+        final rc = _encoderWrite(enc, buffer, n ~/ channels);
+        if (rc < 0) {
           LogCollector.instance.log('OpusConverter', '写帧错误: $rc');
           ok = false;
           break;
@@ -134,7 +133,8 @@ class OpusConverter {
   }
 
   static String _errString(int code) {
-    final cstr = _opeStrerror();
+    if (code == 0) return 'unknown error';
+    final cstr = _strerr(code);
     if (cstr.address == 0) return 'error $code';
     return cstr.toDartString();
   }
