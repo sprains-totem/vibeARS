@@ -106,8 +106,10 @@ vibeARS/
    - Do NOT run local compiler toolchains on host. Commit and push code to GitHub `main` branch to trigger the GitHub Actions workflow, which automatically generates both Android APK and iOS IPA in GitHub Releases.
    - The workflow runs `flutter create --no-overwrite` so README/docs and hand-written platform files are never clobbered.
 7. **Known Implementation Constraints (verified by CI)**:
-   - Native capture (AudioRecord / AVAudioEngine) supports two native recording formats: **WAV (PCM + RIFF)** and **AAC/M4A** (Android via MediaCodec+MediaMuxer, iOS via AVAudioFile). The AAC encoder respects the configured bit rate. MP3/Opus are NOT natively encodable — they require third-party libraries (LAME/libopus); keep them clearly labeled and suggest export via share/ZIP/copy instead of silently falling back.
-   - On Android, MediaCodec AAC output may carry an ADTS header; the pipeline strips it before MediaMuxer, and the muxer track is added once `INFO_OUTPUT_FORMAT_CHANGED` is observed.
+   - Recording formats: **WAV (PCM+RIFF)**, **AAC/M4A** (Android MediaCodec+MediaMuxer, iOS AVAudioFile), and **Opus (.ogg)** — Opus is currently implemented on **Android only** via system MediaCodec `audio/opus` + MediaMuxer `MUXER_OUTPUT_OGG` (Android 10+); on iOS any non-m4a format falls back to WAV until Opus is wired up. The AAC encoder respects the configured bit rate.
+   - **MP3 is NOT yet implemented** (system has no MP3 encoder on either platform; a LAME integration is required). Keep the MP3 format option visibly labeled as pending — never silently fall back.
+   - `ffmpeg_kit_flutter_audio` is unusable (upstream `com.arthenica` AAR and iOS pods were taken offline — 404 on both Maven and CocoaPods). Do not reintroduce it.
+   - On Android, MediaCodec AAC output may carry an ADTS header; the pipeline strips it before MediaMuxer, and the muxer track is added once `INFO_OUTPUT_FORMAT_CHANGED` is observed. ADTS stripping must stay AAC-only (Opus packets never start with 0xFF).
    - `ChoiceChip` has no `enabled` parameter — disable via a null `onSelected`.
    - The resolved `archive` version only supports the 3-argument `ArchiveFile(name, size, bytes)` constructor.
    - `double.clamp()` returns `num` — always append `.toDouble()` before assigning to `double` fields or widget `height`/`value` parameters.
