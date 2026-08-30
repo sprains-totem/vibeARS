@@ -63,7 +63,8 @@ class AudioPipeline(
 
     /** WAV (PCM + RIFF header) output — any format not handled by a real
      *  encoder falls back to uncompressed WAV so files are always valid. */
-    private val isWavOutput: Boolean = !isEncodedOutput
+    private val isWavOutput: Boolean
+        get() = !isEncodedOutput
 
     /** AAC/M4A output via MediaCodec + MediaMuxer. */
     private val isM4aOutput: Boolean = format.lowercase() in setOf("m4a", "aac")
@@ -504,10 +505,6 @@ class AudioPipeline(
         format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
 
         val codec = MediaCodec.createEncoderByType(streamMime)
-        if (MediaCodecInfo.CodecCapabilities.isFormatSupported(codec.codecInfo, format).not()) {
-            // Fall back gracefully: try without the optional PCM encoding hint.
-            format.removeKey(MediaFormat.KEY_PCM_ENCODING)
-        }
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
         encoderPtsUs = 0L
