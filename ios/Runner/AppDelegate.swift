@@ -1,6 +1,7 @@
 import UIKit
 import Flutter
 import AVFoundation
+import opus
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
@@ -125,8 +126,9 @@ class AudioEngineManager: NSObject {
     private var slicerEnabled: Bool = true
     private var sliceDurationSeconds: Double = 300.0
     private var outputDirectory: URL?
-    private var isWavOutput: Bool { !isM4aOutput } // any unimplemented format falls back to WAV
+    private var isWavOutput: Bool { !isM4aOutput && !isOpusOutput }
     private var isM4aOutput: Bool { formatString == "m4a" || formatString == "aac" }
+    private var isOpusOutput: Bool { formatString == "opus" || formatString == "ogg" }
     
     private var currentSliceFileUrl: URL?
     private var currentSliceFileHandle: FileHandle?
@@ -135,6 +137,12 @@ class AudioEngineManager: NSObject {
     private var currentSliceStartTime: Date?
     private var sliceSequence: Int = 1
     private var sessionId: String = UUID().uuidString
+    
+    // Real-time Opus (.opus/Ogg) encoder via the bundled libopusenc.
+    private var opusEncoder: OggOpusEnc?
+    private var opusComments: OggOpusComments?
+    private var opusFrameSamples: Int = 480 // samples per channel for 20ms @48k
+    private var opusPcmAccum: [Int16] = []
     
     // Real-time uplink AAC/ADTS encoder (webSocketAac protocol).
     private var uplinkEnabled = false
@@ -402,7 +410,8 @@ class AudioEngineManager: NSObject {
         }
         
         // Persist the frame: AAC/M4A goes through AVAudioFile (converts
-        // float PCM -> AAC), WAV goes through a raw FileHandle.
+        // float PCM -> AAC), Opus goes through libopusenc (OggOpus), and WAV
+        // through a raw FileHandle.
         if isM4aOutput {
             if let audioFile = currentSliceAudioFile {
                 do {
@@ -412,6 +421,8 @@ class AudioEngineManager: NSObject {
                     delegate?.onLog(tag: "AudioEngineManager", message: "Error writing m4a: \(error)")
                 }
             }
+        } else if isOpusOutput {
+            encodeOpusChunk(pcmData: pcmData)
         } else if let handle = currentSliceFileHandle {
             handle.write(pcmData)
         }
@@ -432,6 +443,28 @@ class AudioEngineManager: NSObject {
         }
     }
     
+    private func encodeOpusChunk(pcmData: Data) {
+        guard let enc = opusEncoder else { return }
+        let samplesPerChannelForFrame = opusFrameSamples
+        let channels = Int(channelCount)
+
+        pcmData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.bindMemory(to: Int16.self).baseAddress else { return }
+            opusPcmAccum.append(contentsOf: UnsafeBufferPointer(start: base, count: raw.count / 2))
+        }
+
+        while opusPcmAccum.count >= samplesPerChannelForFrame * channels {
+            let rc = opusPcmAccum.withUnsafeBufferPointer { buf in
+                ope_encoder_write(enc, buf.baseAddress, Int32(samplesPerChannelForFrame))
+            }
+            if rc < 0 {
+                delegate?.onLog(tag: "AudioEngineManager", message: "Opus encode error: \(rc)")
+                break
+            }
+            opusPcmAccum.removeFirst(samplesPerChannelForFrame * channels)
+        }
+    }
+    
     private func openNextSlice() -> Bool {
         guard let dir = outputDirectory else {
             delegate?.onError(errorMessage: "Output directory is not configured")
@@ -447,11 +480,41 @@ class AudioEngineManager: NSObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
         let timestamp = formatter.string(from: Date())
-        let ext = isM4aOutput ? "m4a" : "wav"
+        let ext: String
+        if isOpusOutput {
+            ext = "opus"
+        } else if isM4aOutput {
+            ext = "m4a"
+        } else {
+            ext = "wav"
+        }
         let fileName = "vibe_slice_\(timestamp)_part\(sliceSequence).\(ext)"
         let fileUrl = dir.appendingPathComponent(fileName)
-        
-        if isM4aOutput {
+
+        if isOpusOutput {
+            guard let comments = ope_comments_create() else {
+                delegate?.onError(errorMessage: "Opus comments alloc failed")
+                return false
+            }
+            var opErr: CInt = 0
+            guard let enc = ope_encoder_create_file(
+                fileUrl.path,
+                comments,
+                opus_int32(sampleRate),
+                Int32(channelCount),
+                0,
+                &opErr
+            ) else {
+                let msg = opErr != 0 ? String(cString: ope_strerror(opErr)) : "unknown"
+                delegate?.onError(errorMessage: "Opus encoder create failed: \(msg)")
+                ope_comments_destroy(comments)
+                return false
+            }
+            opusEncoder = enc
+            opusComments = comments
+            opusPcmAccum.removeAll(keepingCapacity: true)
+            opusFrameSamples = Int(sampleRate) / 50 // 20ms per channel
+        } else if isM4aOutput {
             // Create an AVAudioFile that transcodes float PCM -> AAC (m4a).
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -490,8 +553,20 @@ class AudioEngineManager: NSObject {
     private func closeCurrentSlice() {
         guard let fileUrl = currentSliceFileUrl else { return }
         
-        // Close the m4a writer (finalizes the file) or flush the raw handle.
-        if isM4aOutput {
+        // Close the m4a writer (finalizes the file), drain+destroy the Opus
+        // encoder, or flush the raw WAV handle.
+        if isOpusOutput {
+            if let enc = opusEncoder {
+                ope_encoder_drain(enc)
+                ope_encoder_destroy(enc)
+            }
+            opusEncoder = nil
+            if let comments = opusComments {
+                ope_comments_destroy(comments)
+            }
+            opusComments = nil
+            opusPcmAccum.removeAll()
+        } else if isM4aOutput {
             currentSliceAudioFile = nil // AVAudioFile finalizes on release
         } else {
             currentSliceFileHandle?.synchronizeFile()

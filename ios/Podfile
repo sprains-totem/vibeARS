@@ -30,6 +30,9 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # Bundled Opus/Opusenc xcframework (no network fetch)
+  pod 'OpusVendored', :path => 'ThirdParty/OpusVendored'
+
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths
