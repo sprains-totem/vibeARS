@@ -1,0 +1,84 @@
+name: Build Native Codec Libraries (LAME)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lame_version:
+        description: 'LAME version to build (download from SourceForge)'
+        required: false
+        default: '3.100'
+
+# Builds libmp3lame.so for Android ABIs with the NDK and uploads the results
+# as an artifact. The maintainer downloads the artifact and checks the .so
+# files into android/app/src/main/jniLibs so the main app build never needs
+# to compile third-party code (fixture-style bundled library).
+jobs:
+  build-lame-android:
+    name: Build libmp3lame.so (Android NDK)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK (NDK provisioning)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;25.2.9519653" || true
+          echo "NDK_VERSION=25.2.9519653" >> $GITHUB_ENV
+
+      - name: Download LAME source
+        run: |
+          mkdir -p build-src
+          curl -fL "https://downloads.sourceforge.net/project/lame/3.100/lame-3.100.tar.gz" -o build-src/lame.tar.gz
+          tar -xzf build-src/lame.tar.gz -C build-src
+          ls build-src
+
+      - name: Build for arm64-v8a & armeabi-v7a
+        shell: bash
+        run: |
+          set -e
+          NDK="$ANDROID_HOME/ndk/25.2.9519653"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          export PATH="$TOOLCHAIN/bin:$PATH"
+
+          mkdir -p dist
+
+          # arm64-v8a
+          (
+            cd build-src/lame-3.100
+            make clean >/dev/null 2>&1 || true
+            ./configure \
+              --host=aarch64-linux-android24 \
+              CC=aarch64-linux-android24-clang \
+              --enable-shared --disable-frontend --disable-static \
+              --prefix="$GITHUB_WORKSPACE/dist/arm64-v8a"
+            make -j4
+            make install
+          )
+          # armeabi-v7a
+          (
+            cd build-src/lame-3.100
+            make clean >/dev/null 2>&1 || true
+            ./configure \
+              --host=armv7a-linux-androideabi24 \
+              CC=armv7a-linux-androideabi24-clang \
+              --enable-shared --disable-frontend --disable-static \
+              --prefix="$GITHUB_WORKSPACE/dist/armeabi-v7a"
+            make -j4
+            make install
+          )
+
+          echo "=== artifacts ==="
+          find dist -name "*.so*" -exec ls -la {} \;
+
+      - name: Upload LAME .so artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmp3lame-android
+          path: dist/*/lib/*.so*
+          if-no-files-found: error
