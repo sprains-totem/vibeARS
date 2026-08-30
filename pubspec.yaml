@@ -42,6 +42,9 @@ dependencies:
   # Background & Notification
   flutter_local_notifications: ^17.1.2
 
+  # MP3 encoding: bundled LAME via flutter_lame (double-platform FFI plugin)
+  flutter_lame: ^1.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

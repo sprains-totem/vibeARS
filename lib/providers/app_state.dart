@@ -10,6 +10,7 @@ import '../core/models/audio_device.dart';
 import '../core/models/slicer_config.dart';
 import '../core/models/storage_config.dart';
 import '../core/models/streaming_config.dart';
+import '../services/audio_converter.dart';
 import '../services/audio_engine_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/log_collector.dart';
@@ -48,6 +49,10 @@ class AppState extends ChangeNotifier {
   // Subscriptions
   StreamSubscription? _audioFrameSub;
   StreamSubscription? _sliceCompletedSub;
+
+  // WAV slices produced during the current session (transcoded to MP3 on stop
+  // when the user selected MP3; Opus is already native on Android).
+  final List<String> _sessionWavPaths = [];
 
   // Getters
   AudioRecordingConfig get audioConfig => _audioConfig;
@@ -131,6 +136,10 @@ class AppState extends ChangeNotifier {
     // Listen to 5-min slice completed events
     _sliceCompletedSub = _audioEngine.sliceCompletedStream.listen((data) {
       final sliceItem = AudioSliceItem.fromJson(data);
+      // Track WAV slices of the current session for MP3 post-transcoding.
+      if (sliceItem.fileName.toLowerCase().endsWith('.wav')) {
+        _sessionWavPaths.add(sliceItem.localPath);
+      }
       _uploadQueue.enqueueSlice(sliceItem);
       _storage.refreshFiles();
       // Dashcam-style loop recording: prune oldest unlocked slices if the
@@ -293,6 +302,32 @@ class AppState extends ChangeNotifier {
     }
 
     await _storage.refreshFiles();
+
+    // MP3 sessions: transcode the session's WAV slices with the bundled LAME
+    // encoder and remove the intermediates.
+    final wavs = List<String>.from(_sessionWavPaths);
+    _sessionWavPaths.clear();
+    if (wavs.isNotEmpty && _audioConfig.format == AudioFormatType.mp3) {
+      LogCollector.instance.log('AppState', 'MP3 模式：转码 ${wavs.length} 个切片');
+      for (final wav in wavs) {
+        final outDir = _storage.customStoragePath.isNotEmpty
+            ? _storage.customStoragePath
+            : await _storage.getActiveStoragePath();
+        final mp3 = await AudioConverter.wavToMp3(
+          inputPath: wav,
+          bitRate: _audioConfig.bitRate,
+          outputDir: outDir,
+        );
+        if (mp3 != null) {
+          try {
+            final f = File(wav);
+            if (await f.exists()) await f.delete();
+          } catch (_) {}
+          await _storage.refreshFiles();
+        }
+      }
+    }
+
     LogCollector.instance.log('AppState', '录音已停止并归档，录音库共 ${_storage.files.length} 个文件');
     notifyListeners();
   }
