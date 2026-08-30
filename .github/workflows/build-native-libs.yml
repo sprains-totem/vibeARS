@@ -54,15 +54,23 @@ jobs:
             export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
             export LD="$TOOLCHAIN/bin/ld.lld"
             export STRIP="$TOOLCHAIN/bin/llvm-strip"
+            export NM="$TOOLCHAIN/bin/llvm-nm"
+            export OBJDUMP="$TOOLCHAIN/bin/llvm-objdump"
             export CC="$TOOLCHAIN/bin/${TARGET}${API}-clang"
             export CXX="$TOOLCHAIN/bin/${TARGET}${API}-clang++"
-            export CFLAGS="-O3 -fPIC"
-            export LDFLAGS="-fuse-ld=lld"
+            export CFLAGS="-O3"
+
+            # Diagnostic: verify the toolchain can link before running configure.
+            echo 'int main(void){return 0;}' > /tmp/linktest.c
+            "$CC" -o /tmp/linktest /tmp/linktest.c 2>&1 | tail -20 || { echo "LINK TEST FAILED for $TARGET"; exit 1; }
+            echo "link test OK: $TARGET"
+
             (
               cd "$SRC"
               make clean >/dev/null 2>&1 || true
               ./configure \
                 --host="$TARGET" \
+                --build=x86_64-pc-linux-gnu \
                 --enable-shared --disable-frontend --disable-static \
                 --prefix="$GITHUB_WORKSPACE/dist/$OUT" || { echo "CONFIGURE FAILED for $TARGET"; exit 1; }
               make -j4 || { echo "MAKE FAILED for $TARGET"; exit 1; }
