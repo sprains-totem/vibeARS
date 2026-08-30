@@ -62,7 +62,11 @@ jobs:
 
             # Diagnostic: verify the toolchain can link before running configure.
             echo 'int main(void){return 0;}' > /tmp/linktest.c
-            "$CC" -o /tmp/linktest /tmp/linktest.c 2>&1 | tail -20 || { echo "LINK TEST FAILED for $TARGET"; exit 1; }
+            if ! "$CC" -o /tmp/linktest /tmp/linktest.c 2>/tmp/linktest.err; then
+              echo "=== LINK TEST FAILED for $TARGET ==="
+              cat /tmp/linktest.err
+              exit 1
+            fi
             echo "link test OK: $TARGET"
 
             (
