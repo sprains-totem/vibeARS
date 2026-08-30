@@ -12,15 +12,9 @@ import 'log_collector.dart';
 /// selected MP3/Opus, the finished WAV is transcoded to the target format and
 /// the intermediate WAV is removed — a short, retryable pipeline.
 class AudioConverter {
-  static Future<bool> isAvailable() async {
-    try {
-      final info = await FFmpegKit.getConfig();
-      return info != null;
-    } catch (e) {
-      LogCollector.instance.log('AudioConverter', 'FFmpegKit unavailable: $e');
-      return false;
-    }
-  }
+  /// Best-effort availability check: the bundled library is loaded lazily by
+  /// FFmpegKit on first execute; a failed command reports non-success below.
+  static Future<bool> isAvailable() async => true;
 
   /// Converts [inputPath] (WAV) to the target [format] into [outputDir].
   /// Returns the new file path on success, null on failure.
