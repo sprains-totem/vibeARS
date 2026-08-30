@@ -58,22 +58,27 @@ class AudioConverter {
       final pcmInt16 = Int16List.sublistView(byteData, dataOffset ~/ 2, dataEnd ~/ 2);
       final sampleCount = pcmInt16.length;
 
-      final encoder = LameMp3Encoder(sampleRate, channels, bitRate);
-      final mp3Bytes = <int>[];
+      final encoder = LameMp3Encoder(
+        numChannels: channels,
+        sampleRate: sampleRate,
+        bitRate: bitRate,
+      );
+      final mp3Builder = BytesBuilder();
       const block = 8192;
       for (var i = 0; i < sampleCount; i += block) {
         final end = (i + block < sampleCount) ? i + block : sampleCount;
         final chunk = Int16List.sublistView(pcmInt16, i, end);
-        final encoded = encoder.encode(chunk);
-        if (encoded != null) mp3Bytes.addAll(encoded);
+        final encoded = await encoder.encode(leftChannel: chunk);
+        if (encoded.isNotEmpty) mp3Builder.add(encoded);
       }
-      final flush = encoder.flush();
-      if (flush != null) mp3Bytes.addAll(flush);
-      encoder.close();
+      final flushed = await encoder.flush();
+      if (flushed.isNotEmpty) mp3Builder.add(flushed);
+      await encoder.close();
 
+      final mp3Bytes = mp3Builder.toBytes();
       final base = p.basenameWithoutExtension(inputPath);
       final outputPath = p.join(outputDir, '$base.mp3');
-      await File(outputPath).writeAsBytes(Uint8List.fromList(mp3Bytes), flush: true);
+      await File(outputPath).writeAsBytes(mp3Bytes, flush: true);
       LogCollector.instance.log(
         'AudioConverter',
         'MP3 转码完成: $outputPath (${(mp3Bytes.length / 1024).toStringAsFixed(0)} KB)',
