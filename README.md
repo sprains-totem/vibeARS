@@ -35,7 +35,7 @@
   - **WAV (PCM 无损)** — 双端实时原生（写 PCM + RIFF 头）。
   - **AAC/M4A** — 双端实时原生（Android MediaCodec+MediaMuxer；iOS AVAudioFile）。
   - **MP3** — 双端可用：录音结束后由内置 LAME（flutter_lame）转码生成，码率真实生效。
-  - **Opus (.ogg)** — Android 10+ 由系统编码器（MediaCodec `audio/opus` + OGG muxer）实时录制；iOS 暂无可用 Opus 编码路径（系统无公开编码器、生态无 Dart3 兼容插件），该选项在 iOS 上已禁用以免误导。
+  - **Opus** — Android 10+ 实时原生 `.ogg`（MediaCodec `audio/opus` + OGG muxer）；iOS 由内置 libopusenc（仓库内 vendored `Opus.xcframework`，Dart FFI）在录音结束后转码生成 `.opus`。
   - AAC/MP3/Opus 的码率设置（64k-320kbps）真实作用于编码器。
 - **Android 11+ 全文件管理权限**：内置 `MANAGE_EXTERNAL_STORAGE` 授权检测与引导，支持向 SD 卡或任意受限目录读写。
 
