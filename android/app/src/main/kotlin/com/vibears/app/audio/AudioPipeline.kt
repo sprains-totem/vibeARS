@@ -61,11 +61,33 @@ class AudioPipeline(
         VibeAudioPlugin.reportNativeLog(tag, message)
     }
 
-    /** WAV (PCM + RIFF header) output. */
-    private val isWavOutput: Boolean = format.lowercase() == "wav"
+    /** WAV (PCM + RIFF header) output — any format not handled by a real
+     *  encoder falls back to uncompressed WAV so files are always valid. */
+    private val isWavOutput: Boolean = !isEncodedOutput
 
     /** AAC/M4A output via MediaCodec + MediaMuxer. */
     private val isM4aOutput: Boolean = format.lowercase() in setOf("m4a", "aac")
+
+    /** Opus output (.ogg, OggOpus) via system MediaCodec audio/opus + MediaMuxer
+     *  OGG — requires Android 10+ (API 29). */
+    private val isOpusOutput: Boolean = format.lowercase() in setOf("opus", "ogg")
+
+    /** True for any lossy/encapsulated output that uses the MediaCodec+muxer path. */
+    private val isEncodedOutput: Boolean = isM4aOutput || isOpusOutput
+
+    /** MediaCodec mime for the encoded output. */
+    private val encodedMime: String
+        get() = when {
+            isOpusOutput -> MediaFormat.MIMETYPE_AUDIO_OPUS
+            else -> MediaFormat.MIMETYPE_AUDIO_AAC
+        }
+
+    /** MediaMuxer container matching the encoded output. */
+    private val muxerOutputFormat: Int
+        get() = when {
+            isOpusOutput -> MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG
+            else -> MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+        }
 
     // Current slice file tracking
     private var currentSliceFile: File? = null
@@ -368,8 +390,8 @@ class AudioPipeline(
                 }
 
                 try {
-                    if (isM4aOutput) {
-                        // Encode through MediaCodec and mux into the .m4a file.
+                    if (isEncodedOutput) {
+                        // Encode through MediaCodec and mux into the container.
                         encodeAacFrame(pcmBytes, frames)
                         currentSliceFramesWritten += frames
                         if (slicerEnabled && currentSliceFramesWritten >= maxFramesPerSlice) {
@@ -471,14 +493,21 @@ class AudioPipeline(
         return merged
     }
 
-    private fun configureAacEncoder(): MediaCodec {
-        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount)
-        format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+    private fun configureEncodedEncoder(): MediaCodec {
+        val streamMime = encodedMime
+        val format = MediaFormat.createAudioFormat(streamMime, sampleRate, channelCount)
         format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
         format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 100 * 1024)
+        if (isM4aOutput) {
+            format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+        }
         format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
 
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        val codec = MediaCodec.createEncoderByType(streamMime)
+        if (MediaCodecInfo.CodecCapabilities.isFormatSupported(codec.codecInfo, format).not()) {
+            // Fall back gracefully: try without the optional PCM encoding hint.
+            format.removeKey(MediaFormat.KEY_PCM_ENCODING)
+        }
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
         encoderPtsUs = 0L
@@ -517,8 +546,10 @@ class AudioPipeline(
 
         var offset = info.offset
         var size = info.size
-        // Some encoders emit an ADTS header; MediaMuxer needs raw AAC.
-        if (size > 0 && (outBuf.get(offset).toInt() and 0xFF) == 0xFF) {
+        // Some AAC encoders emit an ADTS header; MediaMuxer needs raw AAC.
+        // Opus (Ogg) samples never start with 0xFF, so this only applies to
+        // the AAC path.
+        if (isM4aOutput && size > 0 && (outBuf.get(offset).toInt() and 0xFF) == 0xFF) {
             val headerLen =
                 ((outBuf.get(offset + 1).toInt() and 0x03) shl 11) or
                     ((outBuf.get(offset + 2).toInt() and 0xFF) shl 3) or
@@ -609,15 +640,19 @@ class AudioPipeline(
                 dir.mkdirs()
             }
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val extension = if (isM4aOutput) "m4a" else "wav"
+            val extension = when {
+                isOpusOutput -> "ogg"
+                isM4aOutput -> "m4a"
+                else -> "wav"
+            }
             val fileName = "vibe_slice_${timeStamp}_part${sliceSequence}.$extension"
             val file = File(dir, fileName)
 
-            if (isM4aOutput) {
-                mediaMuxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            if (isEncodedOutput) {
+                mediaMuxer = MediaMuxer(file.absolutePath, muxerOutputFormat)
                 muxerStarted = false
                 muxerTrackIndex = -1
-                mediaCodec = configureAacEncoder()
+                mediaCodec = configureEncodedEncoder()
             } else {
                 val fos = FileOutputStream(file)
                 // Write 44-byte empty placeholder header for WAV
@@ -648,7 +683,7 @@ class AudioPipeline(
             // of surfacing a broken file in the library.
             if (currentSliceFramesWritten == 0L) {
                 nl(TAG, "切片无音频数据 (0 帧)，删除空文件 ${file.name}")
-                if (isM4aOutput) {
+                if (isEncodedOutput) {
                     // Tear down the muxer/codec so the file handle is released.
                     try {
                         mediaCodec?.stop()
@@ -676,7 +711,7 @@ class AudioPipeline(
                 return
             }
 
-            if (isM4aOutput) {
+            if (isEncodedOutput) {
                 finishM4aSlice()
             } else {
                 val fos = currentSliceOutputStream
@@ -694,7 +729,7 @@ class AudioPipeline(
                 }
             }
 
-            val actualDurationMs = if (isM4aOutput) {
+            val actualDurationMs = if (isEncodedOutput) {
                 (currentSliceFramesWritten * 1000L) / sampleRate
             } else if (sampleRate > 0 && channelCount > 0) {
                 (currentSlicePcmBytesWritten * 1000L) / (sampleRate * channelCount * 2)

@@ -125,7 +125,7 @@ class AudioEngineManager: NSObject {
     private var slicerEnabled: Bool = true
     private var sliceDurationSeconds: Double = 300.0
     private var outputDirectory: URL?
-    private var isWavOutput: Bool { formatString == "wav" }
+    private var isWavOutput: Bool { !isM4aOutput } // any unimplemented format falls back to WAV
     private var isM4aOutput: Bool { formatString == "m4a" || formatString == "aac" }
     
     private var currentSliceFileUrl: URL?

@@ -10,7 +10,6 @@ import '../core/models/audio_device.dart';
 import '../core/models/slicer_config.dart';
 import '../core/models/storage_config.dart';
 import '../core/models/streaming_config.dart';
-import '../services/audio_converter.dart';
 import '../services/audio_engine_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/log_collector.dart';
@@ -49,10 +48,6 @@ class AppState extends ChangeNotifier {
   // Subscriptions
   StreamSubscription? _audioFrameSub;
   StreamSubscription? _sliceCompletedSub;
-
-  // Per-session slice tracking (for post-processing / transcoding)
-  final List<String> _sessionSlicePaths = [];
-  final List<String> _sessionWavPaths = [];
 
   // Getters
   AudioRecordingConfig get audioConfig => _audioConfig;
@@ -136,12 +131,6 @@ class AppState extends ChangeNotifier {
     // Listen to 5-min slice completed events
     _sliceCompletedSub = _audioEngine.sliceCompletedStream.listen((data) {
       final sliceItem = AudioSliceItem.fromJson(data);
-      // Remember slices produced during the current recording session so they
-      // can be transcoded to MP3/Opus after recording stops.
-      _sessionSlicePaths.add(sliceItem.localPath);
-      if (sliceItem.fileName.toLowerCase().endsWith('.wav')) {
-        _sessionWavPaths.add(sliceItem.localPath);
-      }
       _uploadQueue.enqueueSlice(sliceItem);
       _storage.refreshFiles();
       // Dashcam-style loop recording: prune oldest unlocked slices if the
@@ -304,57 +293,8 @@ class AppState extends ChangeNotifier {
     }
 
     await _storage.refreshFiles();
-
-    // Post-process: if the user selected MP3/Opus, transcode the session's WAV
-    // slices with the bundled FFmpegKit (libmp3lame / libopus) and replace the
-    // intermediates.
-    final sessionWavs = List<String>.from(_sessionWavPaths);
-    _sessionWavPaths.clear();
-    _sessionSlicePaths.clear();
-    if (sessionWavs.isNotEmpty &&
-        (_audioConfig.format == AudioFormatType.mp3 ||
-            _audioConfig.format == AudioFormatType.opus)) {
-      await _transcodeSession(sessionWavs);
-    } else {
-      LogCollector.instance.log(
-        'AppState',
-        '录音格式 ${_audioConfig.format.name} 无需转码，保留原生文件',
-      );
-    }
-
     LogCollector.instance.log('AppState', '录音已停止并归档，录音库共 ${_storage.files.length} 个文件');
     notifyListeners();
-  }
-
-  Future<void> _transcodeSession(List<String> wavPaths) async {
-    final format = _audioConfig.format;
-    LogCollector.instance.log(
-      'AppState',
-      '开始转码 ${wavPaths.length} 个切片 -> ${format.name}',
-    );
-    for (final wav in wavPaths) {
-      final outDir = _storage.customStoragePath.isNotEmpty
-          ? _storage.customStoragePath
-          : await _storage.getActiveStoragePath();
-      final converted = await AudioConverter.convert(
-        inputPath: wav,
-        format: format,
-        bitRate: _audioConfig.bitRate,
-        outputDir: outDir,
-      );
-      if (converted != null) {
-        try {
-          final f = File(wav);
-          if (await f.exists()) {
-            await f.delete();
-            LogCollector.instance.log('AppState', '已删除中间文件 $wav');
-          }
-        } catch (e) {
-          LogCollector.instance.log('AppState', '删除中间文件失败: $e');
-        }
-        await _storage.refreshFiles();
-      }
-    }
   }
 
   void _forwardNotification() {

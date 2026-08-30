@@ -570,8 +570,8 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '录音格式：WAV 与 AAC/M4A 由原生引擎实时录制；MP3 与 Opus 采用内置权威编码库（LAME / libopus）在录音结束后转码生成。'
-                                  '选择 AAC/MP3/Opus 时下方码率设置真实生效。',
+                                  '录音格式：WAV / AAC 由原生引擎实时编码；Opus (.ogg) 在 Android 10+ 通过系统编码器实时录制（iOS 待支持）；'
+                                  'MP3 需集成 LAME 编码库，下个版本提供。选择 AAC/Opus 时下方码率设置真实生效。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),
@@ -585,21 +585,32 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           runSpacing: 8,
                           children: AudioFormatType.values.map((fmt) {
                             final isSelected = audioConfig.format == fmt;
-                            // All four formats are supported:
-                            // - WAV/AAC: recorded natively in real time.
-                            // - MP3/Opus: captured as WAV, then transcoded after
-                            //   recording stops via the bundled FFmpegKit.
+                            // WAV/AAC/Opus are recorded natively in real time
+                            // (Opus via Android 10+ / iOS 11+ system encoder).
+                            // MP3 requires LAME which is not linked yet.
+                            final isPending = fmt == AudioFormatType.mp3;
                             return ChoiceChip(
                               label: Text(fmt.displayName),
                               selected: isSelected,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  state.updateAudioConfig(audioConfig.copyWith(format: fmt));
-                                }
-                              },
+                              onSelected: isPending
+                                  ? (_) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('MP3 编码需集成 LAME 库，将在下个版本提供；当前可录制 WAV / AAC / Opus'),
+                                          duration: Duration(seconds: 4),
+                                        ),
+                                      );
+                                    }
+                                  : (selected) {
+                                      if (selected) {
+                                        state.updateAudioConfig(audioConfig.copyWith(format: fmt));
+                                      }
+                                    },
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
-                                color: isSelected ? Colors.black : Colors.white,
+                                color: isSelected
+                                    ? Colors.black
+                                    : (isPending ? const Color(0xFF90A4AE) : Colors.white),
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                 fontSize: 13,
                               ),
