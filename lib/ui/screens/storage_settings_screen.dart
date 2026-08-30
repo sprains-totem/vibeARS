@@ -570,8 +570,8 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '录音格式：WAV / AAC 实时原生编码；Opus (.ogg) 在 Android 10+ 实时原生（iOS 待支持）；'
-                                  'MP3 由内置 LAME (flutter_lame) 在录音结束后转码生成（双端可用）。选择 AAC/MP3/Opus 时下方码率设置真实生效。',
+                                  '录音格式：WAV / AAC 实时原生编码；MP3 由内置 LAME (flutter_lame) 在录音结束后转码生成（双端）；'
+                                  'Opus (.ogg) 由 Android 10+ 系统编码器实时录制（iOS 暂不支持）。选择 AAC/MP3/Opus 时下方码率设置真实生效。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),
@@ -585,17 +585,28 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                           runSpacing: 8,
                           children: AudioFormatType.values.map((fmt) {
                             final isSelected = audioConfig.format == fmt;
+                            // Opus is natively encoded on Android (10+); iOS has
+                            // no public Opus encoder and no Dart-3 compatible
+                            // plugin — so on iOS the option is honestly disabled
+                            // instead of silently falling back.
+                            final opusUnavailable = fmt == AudioFormatType.opus && Platform.isIOS;
                             return ChoiceChip(
                               label: Text(fmt.displayName),
                               selected: isSelected,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  state.updateAudioConfig(audioConfig.copyWith(format: fmt));
-                                }
-                              },
+                              onSelected: opusUnavailable
+                                  ? null
+                                  : (selected) {
+                                      if (selected) {
+                                        state.updateAudioConfig(audioConfig.copyWith(format: fmt));
+                                      }
+                                    },
                               selectedColor: VibeTheme.primaryNeon,
                               labelStyle: TextStyle(
-                                color: isSelected ? Colors.black : Colors.white,
+                                color: isSelected
+                                    ? Colors.black
+                                    : (opusUnavailable
+                                        ? const Color(0xFF90A4AE)
+                                        : Colors.white),
                                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                 fontSize: 13,
                               ),

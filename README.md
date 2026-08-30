@@ -31,7 +31,12 @@
 ### 3. 💾 本地存储、公共文件夹优先与自由路径选择
 - **Android 公共文件夹优先**：默认优先采用系统公共音乐目录（`/storage/emulated/0/Music/vibeARS`），系统文件管理器与第三方播放器即时可见，避免 App 卸载丢失录音。
 - **自由路径切换与预设**：支持一键切换至公共下载（Download）、公共录音（Recordings）、公共文档（Documents）或私有沙盒，并支持自由输入任意自定义存储绝对路径；路径不可写时会明确提示并保持原路径。
-- **原生多格式录制**：支持 **WAV (PCM 无损)** 与 **AAC/M4A 有损压缩** 两种原生录制格式（Android 由 MediaCodec+MediaMuxer 编码，iOS 由 AVAudioFile 编码），选择 AAC 时码率设置（64k-320kbps）真实作用于编码器；MP3/Opus 需集成第三方编码库，当前可通过录音库的分享/ZIP/目录复制导出转换。
+- **原生多格式录制**：
+  - **WAV (PCM 无损)** — 双端实时原生（写 PCM + RIFF 头）。
+  - **AAC/M4A** — 双端实时原生（Android MediaCodec+MediaMuxer；iOS AVAudioFile）。
+  - **MP3** — 双端可用：录音结束后由内置 LAME（flutter_lame）转码生成，码率真实生效。
+  - **Opus (.ogg)** — Android 10+ 由系统编码器（MediaCodec `audio/opus` + OGG muxer）实时录制；iOS 暂无可用 Opus 编码路径（系统无公开编码器、生态无 Dart3 兼容插件），该选项在 iOS 上已禁用以免误导。
+  - AAC/MP3/Opus 的码率设置（64k-320kbps）真实作用于编码器。
 - **Android 11+ 全文件管理权限**：内置 `MANAGE_EXTERNAL_STORAGE` 授权检测与引导，支持向 SD 卡或任意受限目录读写。
 
 ### 4. 🎵 全功能高级播放器与批量导出系统 (Audio Player & Batch Export)
