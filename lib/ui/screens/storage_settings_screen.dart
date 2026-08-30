@@ -571,7 +571,7 @@ class _StorageSettingsScreenState extends State<StorageSettingsScreen> {
                               Expanded(
                                 child: Text(
                                   '录音格式：WAV / AAC 实时原生编码；MP3 由内置 LAME (flutter_lame) 在录音结束后转码生成（双端）；'
-                                  'Opus (.opus/Ogg) 实时录制：Android 10+ 用系统 MediaCodec，iOS 用内置 libopusenc。选择 AAC/MP3/Opus 时下方码率设置真实生效。',
+                                  'Opus：Android 10+ 用系统编码器实时录制 .ogg，iOS 用内置 libopusenc 转码生成 .opus。选择 AAC/MP3/Opus 时下方码率设置真实生效。',
                                   style: TextStyle(fontSize: 11, color: VibeTheme.textSecondary),
                                 ),
                               ),

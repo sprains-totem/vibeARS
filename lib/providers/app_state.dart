@@ -14,6 +14,7 @@ import '../services/audio_converter.dart';
 import '../services/audio_engine_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/log_collector.dart';
+import '../services/opus_converter.dart';
 import '../services/storage/upload_queue_manager.dart';
 import '../services/streaming_service.dart';
 
@@ -303,22 +304,33 @@ class AppState extends ChangeNotifier {
 
     await _storage.refreshFiles();
 
-    // MP3 sessions: transcode the session's WAV slices with the bundled LAME
-    // encoder and remove the intermediates.
+    // Post-processing: MP3 (LAME, both platforms) and Opus on iOS (bundled
+    // libopusenc) are transcoded from this session's native WAV slices.
     final wavs = List<String>.from(_sessionWavPaths);
     _sessionWavPaths.clear();
-    if (wavs.isNotEmpty && _audioConfig.format == AudioFormatType.mp3) {
-      LogCollector.instance.log('AppState', 'MP3 模式：转码 ${wavs.length} 个切片');
+    final format = _audioConfig.format;
+    final needTranscode = wavs.isNotEmpty &&
+        (format == AudioFormatType.mp3 ||
+            (format == AudioFormatType.opus && Platform.isIOS));
+    if (needTranscode) {
+      final targetLabel = format == AudioFormatType.mp3 ? 'MP3' : 'Opus';
+      LogCollector.instance.log('AppState', '$targetLabel 模式：转码 ${wavs.length} 个切片');
       for (final wav in wavs) {
         final outDir = _storage.customStoragePath.isNotEmpty
             ? _storage.customStoragePath
             : await _storage.getActiveStoragePath();
-        final mp3 = await AudioConverter.wavToMp3(
-          inputPath: wav,
-          bitRate: _audioConfig.bitRate,
-          outputDir: outDir,
-        );
-        if (mp3 != null) {
+        final converted = format == AudioFormatType.mp3
+            ? await AudioConverter.wavToMp3(
+                inputPath: wav,
+                bitRate: _audioConfig.bitRate,
+                outputDir: outDir,
+              )
+            : await OpusConverter.wavToOpus(
+                inputPath: wav,
+                bitRate: _audioConfig.bitRate,
+                outputDir: outDir,
+              );
+        if (converted != null) {
           try {
             final f = File(wav);
             if (await f.exists()) await f.delete();

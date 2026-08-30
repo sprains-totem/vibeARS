@@ -10,4 +10,10 @@ Pod::Spec.new do |s|
   s.source           = { :path => '.' }
   s.vendored_frameworks = 'Opus.xcframework'
   s.static_framework = true
+  # Force-load the static framework so its ope_*/opus_* symbols survive the
+  # linker even though Swift never references them (dart:ffi looks them up at
+  # runtime via DynamicLibrary.process()).
+  s.pod_target_xcconfig = {
+    'OTHER_LDFLAGS' => '$(inherited) -Wl,-force_load,${PODS_XCFRAMEWORKS_BUILD_DIR}/OpusVendored/opus.framework/opus'
+  }
 end
