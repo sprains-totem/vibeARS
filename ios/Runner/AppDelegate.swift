@@ -2,6 +2,7 @@ import UIKit
 import Flutter
 import AVFoundation
 import opus
+import opus.enc
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {

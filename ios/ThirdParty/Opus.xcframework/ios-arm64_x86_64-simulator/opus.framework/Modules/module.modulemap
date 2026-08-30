@@ -8,11 +8,6 @@ framework module opus {
 		export *
 	}
 
-	module file {
-		header "opusfile.h"
-		export *
-	}
-
 	module enc {
 		header "opusenc.h"
 		export *
